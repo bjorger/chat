@@ -1,0 +1,21 @@
+packages/adapter-telegram/src/index.test.ts
+  s_e85773ab995e96::t_80821df916ce4f 1853-1939
+packages/adapter-telegram/src/index.ts
+  s_e85773ab995e96::t_7b3d0106ee01b7 3925,3928,3930-3936,3938-3939,3943
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "f0fc617e42c9499aee6c72a8b0689203ca02f57c",
+  "prompts": {},
+  "sessions": {
+    "s_e85773ab995e96": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0a605-dd81-7ea0-9c88-be6235d3733d",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Robin Braumann <robin.braumann@n8n.io>"
+    }
+  }
+}
