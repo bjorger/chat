@@ -1,0 +1,27 @@
+packages/adapter-telegram/src/index.ts
+  s_e85773ab995e96::t_07e5c5a72fa957 927,933,990,996,1104,1111,1146,1153
+  s_e85773ab995e96::t_91582bba7ef1b5 913-920,926,934,954,970-973,989,997,999-1000,1103,1128,1134,1145,1154,1162
+  s_e85773ab995e96::t_00bdb1642dd033 911-912,3927
+  s_e85773ab995e96::t_ce2c2c4d9f393b 1112
+  s_e85773ab995e96::t_3a713ea3062dcd 3928,3934
+packages/adapter-telegram/src/index.test.ts
+  s_e85773ab995e96::t_75ed7d20cb830c 1753-1852
+.changeset/tidy-pears-check.md
+  s_e85773ab995e96::t_367aaf8b5bdd87 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a419c715d9c306a57458e9368c28592688c5f378",
+  "prompts": {},
+  "sessions": {
+    "s_e85773ab995e96": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0a605-dd81-7ea0-9c88-be6235d3733d",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Robin Braumann <robin.braumann@n8n.io>"
+    }
+  }
+}
