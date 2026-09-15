@@ -8,6 +8,8 @@ import {
   parseMessageName,
 } from "./thread-utils";
 
+const INVALID_MESSAGE_ID_REGEX = /Invalid Google Chat message id/;
+
 threadIdContract<GoogleChatThreadId>({
   name: "gchat",
   encode: (d) => encodeThreadId(d),
@@ -109,8 +111,6 @@ describe("parseMessageName", () => {
     "x",
     "",
   ])("rejects %j", (name) => {
-    expect(() => parseMessageName(name)).toThrow(
-      /Invalid Google Chat message id/
-    );
+    expect(() => parseMessageName(name)).toThrow(INVALID_MESSAGE_ID_REGEX);
   });
 });
