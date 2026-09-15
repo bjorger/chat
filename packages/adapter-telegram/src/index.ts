@@ -908,19 +908,30 @@ export class TelegramAdapter
   protected processUpdate(
     update: TelegramUpdate,
     options?: WebhookOptions
-  ): void {
+  ): Promise<void>[] | void {
+    return this.collectUpdateTasks(update, options);
+  }
+
+  private collectUpdateTasks(
+    update: TelegramUpdate,
+    options?: WebhookOptions
+  ): Promise<void>[] {
+    const tasks: Promise<void>[] = [];
+
     // Connection state is recorded before the allowlist gate: a
     // `business_connection` update carries no customer user id, and dropping
     // it would leave a revoked connection looking usable.
     if (this.businessMode && update.business_connection) {
       const connection = update.business_connection;
-      const task = this.cacheBusinessConnection(connection).catch((error) => {
+      const task = this.cacheBusinessConnection(connection);
+      const tracked = task.catch((error) => {
         this.logger.warn("Failed to cache Telegram business connection", {
           error: String(error),
           connectionId: connection.id,
         });
       });
-      options?.waitUntil?.(task);
+      options?.waitUntil?.(tracked);
+      tasks.push(task);
     }
 
     const messageUpdate =
@@ -940,7 +951,7 @@ export class TelegramAdapter
       this.allowedUserIds &&
       (userId === undefined || !this.allowedUserIds.has(String(userId)))
     ) {
-      return;
+      return tasks;
     }
 
     const handledSlashCommand =
@@ -956,7 +967,10 @@ export class TelegramAdapter
       );
 
     if (messageUpdate && !handledSlashCommand) {
-      this.handleIncomingMessageUpdate(messageUpdate, options);
+      const task = this.handleIncomingMessageUpdate(messageUpdate, options);
+      if (task) {
+        tasks.push(task);
+      }
     }
 
     if (update.callback_query) {
@@ -972,14 +986,18 @@ export class TelegramAdapter
         businessMessageUpdate,
         { isEdit: update.business_message === undefined },
         options
-      ).catch((error) => {
+      );
+      const tracked = task.catch((error) => {
         this.logger.warn("Failed to process Telegram business message", {
           error: String(error),
           connectionId: businessMessageUpdate.business_connection_id,
         });
       });
-      options?.waitUntil?.(task);
+      options?.waitUntil?.(tracked);
+      tasks.push(task);
     }
+
+    return tasks;
   }
 
   protected businessConnectionCacheKey(connectionId: string): string {
@@ -1082,17 +1100,16 @@ export class TelegramAdapter
     });
 
     if (telegramMessage.media_group_id) {
-      const task = this.processIncomingMediaGroup(
-        telegramMessage,
-        threadId
-      ).catch((error) => {
+      const task = this.processIncomingMediaGroup(telegramMessage, threadId);
+      const tracked = task.catch((error) => {
         this.logger.warn("Failed to process incoming Telegram media group", {
           error: String(error),
           mediaGroupId: telegramMessage.media_group_id,
           threadId,
         });
       });
-      options?.waitUntil?.(task);
+      options?.waitUntil?.(tracked);
+      await task;
       return;
     }
 
@@ -1108,14 +1125,13 @@ export class TelegramAdapter
     const parsedMessage = this.parseTelegramMessage(telegramMessage, threadId);
     this.cacheMessage(parsedMessage);
 
-    // Not awaited: processMessage logs and waitUntil-tracks its own failures.
-    this.chat.processMessage(this, threadId, parsedMessage, options);
+    await this.chat.processMessage(this, threadId, parsedMessage, options);
   }
 
   protected handleIncomingMessageUpdate(
     telegramMessage: TelegramMessage,
     options?: WebhookOptions
-  ): void {
+  ): Promise<void> | undefined {
     if (!this.chat) {
       return;
     }
@@ -1126,18 +1142,16 @@ export class TelegramAdapter
     });
 
     if (telegramMessage.media_group_id) {
-      const task = this.processIncomingMediaGroup(
-        telegramMessage,
-        threadId
-      ).catch((error) => {
+      const task = this.processIncomingMediaGroup(telegramMessage, threadId);
+      const tracked = task.catch((error) => {
         this.logger.warn("Failed to process incoming Telegram media group", {
           error: String(error),
           mediaGroupId: telegramMessage.media_group_id,
           threadId,
         });
       });
-      options?.waitUntil?.(task);
-      return;
+      options?.waitUntil?.(tracked);
+      return task;
     }
 
     this.startTypingForPrivateMessage(telegramMessage, threadId, options);
@@ -1145,7 +1159,7 @@ export class TelegramAdapter
     const parsedMessage = this.parseTelegramMessage(telegramMessage, threadId);
     this.cacheMessage(parsedMessage);
 
-    this.chat.processMessage(this, threadId, parsedMessage, options);
+    return this.chat.processMessage(this, threadId, parsedMessage, options);
   }
 
   protected async processIncomingMediaGroup(
@@ -3909,15 +3923,15 @@ export class TelegramAdapter
         }
 
         for (const update of updates) {
-          offset = update.update_id + 1;
-
           try {
-            this.processUpdate(update);
+            await Promise.all(this.processUpdate(update) ?? []);
+            offset = update.update_id + 1;
           } catch (error) {
             this.logger.warn("Failed to process Telegram polled update", {
               error: String(error),
               updateId: update.update_id,
             });
+            break;
           }
         }
       } catch (error) {
