@@ -1057,16 +1057,15 @@ export class Chat<
       await this.handleIncomingMessage(adapter, threadId, message);
     })();
 
-    // Track via waitUntil with errors swallowed (existing webhook semantics —
-    // platforms shouldn't retry on handler bugs). The returned task itself
-    // still rejects so streaming adapters (e.g. @chat-adapter/web) can
-    // surface failures to the client.
+    // Keep existing fulfilled waitUntil semantics by default while logging.
+    // The returned task itself still rejects so streaming adapters (e.g.
+    // @chat-adapter/web) can surface failures to the client.
     const tracked = task.catch((err) => {
       this.logger.error("Message processing error", { error: err, threadId });
     });
 
     if (options?.waitUntil) {
-      options.waitUntil(tracked);
+      options.waitUntil(options.propagateHandlerErrors ? task : tracked);
     }
 
     return task;
@@ -1177,7 +1176,8 @@ export class Chat<
   ): Promise<void> {
     const task = runInConversation(event.threadId, () =>
       this.handleActionEvent(event, options)
-    ).catch((err) => {
+    );
+    const tracked = task.catch((err) => {
       this.logger.error("Action processing error", {
         error: err,
         actionId: event.actionId,
@@ -1186,10 +1186,10 @@ export class Chat<
     });
 
     if (options?.waitUntil) {
-      options.waitUntil(task);
+      options.waitUntil(options.propagateHandlerErrors ? task : tracked);
     }
 
-    return task;
+    return tracked;
   }
 
   async processOptionsLoad(
@@ -1347,7 +1347,8 @@ export class Chat<
     },
     options: WebhookOptions | undefined
   ): void {
-    const task = this.handleSlashCommandEvent(event, options).catch((err) => {
+    const task = this.handleSlashCommandEvent(event, options);
+    const tracked = task.catch((err) => {
       this.logger.error("Slash command processing error", {
         error: err,
         command: event.command,
@@ -1356,7 +1357,7 @@ export class Chat<
     });
 
     if (options?.waitUntil) {
-      options.waitUntil(task);
+      options.waitUntil(options.propagateHandlerErrors ? task : tracked);
     }
   }
 

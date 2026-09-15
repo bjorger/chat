@@ -210,6 +210,14 @@ export interface WebhookOptions {
     contextId: string
   ) => Promise<{ viewId: string } | undefined>;
   /**
+   * Opt in to exposing message, action, and slash command handler errors
+   * through `waitUntil`.
+   * This only changes handler-error observability through `waitUntil`; errors
+   * are still logged and direct method behavior is unchanged.
+   * Defaults to `false`, preserving the current fulfilled-task behavior.
+   */
+  propagateHandlerErrors?: boolean;
+  /**
    * Function to run message handling in the background.
    * Use this to ensure fast webhook responses while processing continues.
    *
