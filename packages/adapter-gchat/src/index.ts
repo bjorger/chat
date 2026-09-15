@@ -58,6 +58,7 @@ import {
   encodeThreadId,
   type GoogleChatThreadId,
   isDMThread,
+  parseMessageName,
 } from "./thread-utils";
 import { UserInfoCache } from "./user-info";
 import {
@@ -2680,11 +2681,43 @@ export class GoogleChatAdapter implements Adapter<GoogleChatThreadId, unknown> {
    */
   private assertMessageInSpace(threadId: string, messageId: string): void {
     const { spaceName } = this.decodeThreadId(threadId);
-    if (!messageId.startsWith(`${spaceName}/messages/`)) {
+    const message = parseMessageName(messageId);
+    if (message.spaceName !== spaceName) {
       throw new ValidationError(
         "gchat",
         `Message "${messageId}" does not belong to space "${spaceName}" of thread "${threadId}"`
       );
+    }
+  }
+
+  /**
+   * Fetch a single message by resource name.
+   *
+   * The returned message carries the thread id Google reports for it, not
+   * the one supplied, so callers can confirm which thread a message really
+   * belongs to before acting on it.
+   */
+  async fetchMessage(
+    threadId: string,
+    messageId: string
+  ): Promise<Message<unknown> | null> {
+    this.assertMessageInSpace(threadId, messageId);
+    const { spaceName } = this.decodeThreadId(threadId);
+    try {
+      this.logger.debug("GChat API: spaces.messages.get", { messageId });
+      const response = await this.chatApi.spaces.messages.get({
+        name: messageId,
+      });
+      return await this.parseGChatListMessage(
+        response.data,
+        spaceName,
+        threadId
+      );
+    } catch (error) {
+      if ((error as { code?: number } | null)?.code === 404) {
+        return null;
+      }
+      this.handleGoogleChatError(error, "fetchMessage");
     }
   }
 

@@ -5,6 +5,7 @@ import {
   encodeThreadId,
   type GoogleChatThreadId,
   isDMThread,
+  parseMessageName,
 } from "./thread-utils";
 
 threadIdContract<GoogleChatThreadId>({
@@ -72,5 +73,44 @@ describe("Thread ID Encoding/Decoding", () => {
     it("should return false for thread IDs with :dm in the middle", () => {
       expect(isDMThread("gchat:dm:spaces/ABC")).toBe(false);
     });
+  });
+});
+
+describe("parseMessageName", () => {
+  it("parses a server-assigned message name", () => {
+    expect(
+      parseMessageName("spaces/AAQAJ9CXYcg/messages/FGEOaAwNIcs.FGEOaAwNIcs")
+    ).toEqual({
+      spaceName: "spaces/AAQAJ9CXYcg",
+      messageId: "FGEOaAwNIcs.FGEOaAwNIcs",
+    });
+  });
+
+  it("parses a client-assigned message name", () => {
+    expect(parseMessageName("spaces/ABC_1-2/messages/client-my_id-3")).toEqual({
+      spaceName: "spaces/ABC_1-2",
+      messageId: "client-my_id-3",
+    });
+  });
+
+  it.each([
+    "spaces/ABC/messages/../../OTHER/messages/x",
+    "spaces/ABC/messages/./x",
+    "spaces/ABC/messages/x/",
+    "spaces/ABC/messages/",
+    "spaces/ABC/messages/x?y=1",
+    "spaces/ABC/messages/x#y",
+    "spaces/ABC/messages/%2e%2e",
+    "spaces/ABC/messages/a..b",
+    "spaces//messages/x",
+    "spaces/ABC/threads/x",
+    "/spaces/ABC/messages/x",
+    "https://chat.googleapis.com/v1/spaces/ABC/messages/x",
+    "x",
+    "",
+  ])("rejects %j", (name) => {
+    expect(() => parseMessageName(name)).toThrow(
+      /Invalid Google Chat message id/
+    );
   });
 });
