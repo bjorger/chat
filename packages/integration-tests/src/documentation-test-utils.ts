@@ -107,6 +107,10 @@ export const findPublishedPackages = (): PublishedPackage[] => {
 
 export const VALID_PACKAGE_README_IMPORTS = [
   "chat",
+  "@chat-adapter/gmail",
+  "@chat-adapter/gmail/api",
+  "@chat-adapter/gmail/format",
+  "@chat-adapter/gmail/webhook",
   "@chat-adapter/slack",
   "@chat-adapter/teams",
   "@chat-adapter/gchat",
