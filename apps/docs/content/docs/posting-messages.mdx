@@ -157,7 +157,7 @@ See the [Cards](/docs/cards) page for the full list of card components.
 
 ## Streaming
 
-Pass an AI SDK stream to `thread.post()` to stream a message in real time. The SDK uses platform-native streaming where available and falls back to post-then-edit or buffered delivery depending on the platform.
+Pass an AI SDK or TanStack AI stream to `thread.post()` to stream a message in real time. The SDK uses platform-native streaming where available and falls back to post-then-edit or buffered delivery depending on the platform.
 
 ```typescript title="lib/bot.ts" lineNumbers
 import { ToolLoopAgent } from "ai";
@@ -167,7 +167,7 @@ const result = await agent.stream({ prompt: message.text });
 await thread.post(result.fullStream);
 ```
 
-Both `fullStream` and `textStream` are supported. Use `fullStream` with multi-step agents — it preserves paragraph breaks between steps. Any `AsyncIterable<string>` also works for custom streams.
+Both `fullStream` and `textStream` are supported. Use `fullStream` with multi-step agents — it preserves paragraph breaks between steps. Streams returned by TanStack AI's `chat()` are also auto-detected, with a paragraph break inserted between tool-loop turns. Any `AsyncIterable<string>` also works for custom streams.
 
 For multi-turn conversations, use [`toAiMessages()`](/docs/ai/to-ai-messages) to convert thread history into the `{ role, content }[]` format expected by AI SDKs.
 

@@ -100,6 +100,105 @@ describe("fromFullStream", () => {
     });
   });
 
+  describe("AG-UI streams (TanStack AI chat())", () => {
+    it("extracts TEXT_MESSAGE_CONTENT deltas", async () => {
+      const stream = events([
+        { type: "RUN_STARTED", threadId: "t1", runId: "r1" },
+        { type: "TEXT_MESSAGE_START", messageId: "m1", role: "assistant" },
+        { type: "TEXT_MESSAGE_CONTENT", messageId: "m1", delta: "hello" },
+        { type: "TEXT_MESSAGE_CONTENT", messageId: "m1", delta: " world" },
+        { type: "TEXT_MESSAGE_END", messageId: "m1" },
+        { type: "RUN_FINISHED", threadId: "t1", runId: "r1" },
+      ]);
+      expect(await collect(fromFullStream(stream))).toBe("hello world");
+    });
+
+    it("injects separator between text messages in a tool loop", async () => {
+      const stream = events([
+        { type: "TEXT_MESSAGE_START", messageId: "m1", role: "assistant" },
+        { type: "TEXT_MESSAGE_CONTENT", messageId: "m1", delta: "Looking." },
+        { type: "TEXT_MESSAGE_END", messageId: "m1" },
+        { type: "TOOL_CALL_START", toolCallId: "c1", toolCallName: "search" },
+        { type: "TOOL_CALL_ARGS", toolCallId: "c1", delta: '{"q":"x"}' },
+        { type: "TOOL_CALL_END", toolCallId: "c1" },
+        { type: "TOOL_CALL_RESULT", toolCallId: "c1", content: "data" },
+        { type: "TEXT_MESSAGE_START", messageId: "m2", role: "assistant" },
+        { type: "TEXT_MESSAGE_CONTENT", messageId: "m2", delta: "Found it." },
+        { type: "TEXT_MESSAGE_END", messageId: "m2" },
+      ]);
+      expect(await collect(fromFullStream(stream))).toBe(
+        "Looking.\n\nFound it."
+      );
+    });
+
+    it("does not add trailing separator after final TEXT_MESSAGE_END", async () => {
+      const stream = events([
+        { type: "TEXT_MESSAGE_CONTENT", messageId: "m1", delta: "done" },
+        { type: "TEXT_MESSAGE_END", messageId: "m1" },
+        { type: "RUN_FINISHED", threadId: "t1", runId: "r1" },
+      ]);
+      expect(await collect(fromFullStream(stream))).toBe("done");
+    });
+
+    it("does not inject separator when TEXT_MESSAGE_END comes before any text", async () => {
+      const stream = events([
+        { type: "TEXT_MESSAGE_START", messageId: "m0", role: "assistant" },
+        { type: "TEXT_MESSAGE_END", messageId: "m0" },
+        { type: "TEXT_MESSAGE_CONTENT", messageId: "m1", delta: "first" },
+      ]);
+      expect(await collect(fromFullStream(stream))).toBe("first");
+    });
+
+    it("skips tool-call ARGS deltas even though they carry a delta field", async () => {
+      const stream = events([
+        { type: "TOOL_CALL_ARGS", toolCallId: "c1", delta: '{"secret":1}' },
+        { type: "TEXT_MESSAGE_CONTENT", messageId: "m1", delta: "visible" },
+      ]);
+      expect(await collect(fromFullStream(stream))).toBe("visible");
+    });
+
+    it("skips reasoning and run lifecycle events", async () => {
+      const stream = events([
+        { type: "REASONING_START", messageId: "r1" },
+        { type: "REASONING_MESSAGE_CONTENT", messageId: "r1", delta: "hmm" },
+        { type: "REASONING_END", messageId: "r1" },
+        { type: "STEP_STARTED", stepName: "think" },
+        { type: "STEP_FINISHED", stepName: "think" },
+        { type: "TEXT_MESSAGE_CONTENT", messageId: "m1", delta: "answer" },
+        { type: "RUN_ERROR", message: "boom" },
+      ]);
+      expect(await collect(fromFullStream(stream))).toBe("answer");
+    });
+
+    it("skips STATE_DELTA even though its delta is an array", async () => {
+      const stream = events([
+        { type: "STATE_DELTA", delta: [{ op: "add", path: "/x", value: 1 }] },
+        { type: "TEXT_MESSAGE_CONTENT", messageId: "m1", delta: "text" },
+      ]);
+      expect(await collect(fromFullStream(stream))).toBe("text");
+    });
+
+    it("ignores TEXT_MESSAGE_CONTENT with non-string delta", async () => {
+      const stream = events([
+        { type: "TEXT_MESSAGE_CONTENT", messageId: "m1", delta: 42 },
+        { type: "TEXT_MESSAGE_CONTENT", messageId: "m1" },
+        { type: "TEXT_MESSAGE_CONTENT", messageId: "m1", delta: "ok" },
+      ]);
+      expect(await collect(fromFullStream(stream))).toBe("ok");
+    });
+
+    it("handles AI SDK and AG-UI events in the same stream", async () => {
+      const stream = events([
+        { type: "text-delta", textDelta: "a" },
+        { type: "finish-step" },
+        { type: "TEXT_MESSAGE_CONTENT", messageId: "m1", delta: "b" },
+        { type: "TEXT_MESSAGE_END", messageId: "m1" },
+        { type: "text-delta", text: "c" },
+      ]);
+      expect(await collect(fromFullStream(stream))).toBe("a\n\nb\n\nc");
+    });
+  });
+
   describe("textStream (plain strings)", () => {
     it("passes through string chunks", async () => {
       const stream = events(["hello", " ", "world"]);

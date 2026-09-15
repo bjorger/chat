@@ -1782,7 +1782,7 @@ export type AdapterPostableMessage =
  * - `{ card: CardElement }` - Rich card with buttons (Block Kit / Adaptive Cards / GChat Cards)
  * - `CardElement` - Direct card element
  * - `AsyncIterable<string>` - Streaming text (e.g., from AI SDK's textStream)
- * - `AsyncIterable<string | StreamEvent>` - AI SDK fullStream (auto-detected, extracts text with step separators)
+ * - `AsyncIterable<string | StreamEvent>` - AI SDK fullStream or TanStack AI `chat()` stream (auto-detected, extracts text with step separators)
  */
 export type PostableMessage =
   | AdapterPostableMessage
@@ -1790,14 +1790,18 @@ export type PostableMessage =
   | PostableObject;
 
 /**
- * Duck-typed stream event compatible with AI SDK's `fullStream`.
- * - `text-delta` events are extracted as text output.
- * - `finish-step` events trigger paragraph separators between steps.
- * - All other event types (tool-call, tool-result, etc.) are silently skipped.
+ * Duck-typed stream event compatible with AI SDK's `fullStream` and with
+ * AG-UI protocol streams such as TanStack AI's `chat()`.
+ * - `text-delta` (AI SDK) and `TEXT_MESSAGE_CONTENT` (AG-UI) events are extracted as text output.
+ * - `finish-step` (AI SDK) and `TEXT_MESSAGE_END` (AG-UI) events trigger paragraph separators between steps.
+ * - All other event types (tool calls, tool results, run lifecycle, reasoning, etc.) are silently skipped.
  */
 export type StreamEvent =
   | { textDelta: string; type: "text-delta" }
+  | { text: string; type: "text-delta" }
   | { type: "finish-step" }
+  | { delta: string; messageId: string; type: "TEXT_MESSAGE_CONTENT" }
+  | { messageId: string; type: "TEXT_MESSAGE_END" }
   | { type: string };
 
 export interface PostableRaw {

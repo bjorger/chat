@@ -57,7 +57,8 @@ await thread.post({ ast: root([paragraph([text("Hello")])]) });
 // Card
 await thread.post(Card({ title: "Hi", children: [Text("Hello")] }));
 
-// Stream (fullStream recommended for multi-step agents)
+// Stream (AI SDK fullStream recommended for multi-step agents)
+// TanStack AI chat() streams are also accepted
 await thread.post(result.fullStream);
 
 // Plan (mutable task list)
