@@ -26,7 +26,18 @@ const envelope = z.object({
     publishTime: z.string().optional(),
   }),
 });
-const notification = z.object({ emailAddress: mailbox, historyId });
+const notification = z.object({
+  emailAddress: mailbox,
+  historyId: z.union([
+    historyId,
+    z
+      .number()
+      .int()
+      .nonnegative()
+      .max(Number.MAX_SAFE_INTEGER)
+      .transform(String),
+  ]),
+});
 
 export interface GmailNotification {
   emailAddress: string;

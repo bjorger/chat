@@ -7,7 +7,10 @@ const subscription = "projects/project/subscriptions/mail";
 const email = "push@project.iam.gserviceaccount.com";
 let keys: Awaited<ReturnType<typeof generateKeyPair>>;
 
-function body(destination = subscription): string {
+function body(
+  destination = subscription,
+  historyId: string | number = "9007199254740993"
+): string {
   return JSON.stringify({
     subscription: destination,
     message: {
@@ -16,7 +19,7 @@ function body(destination = subscription): string {
       data: Buffer.from(
         JSON.stringify({
           emailAddress: "agent@example.com",
-          historyId: "9007199254740993",
+          historyId,
         })
       ).toString("base64"),
     },
@@ -72,6 +75,22 @@ describe("Gmail Pub/Sub primitives", () => {
       messageId: "delivery",
       subscription,
     });
+  });
+
+  it("normalizes numeric history ids from live Gmail notifications", async () => {
+    await expect(
+      verifier()(request(await token(), body(subscription, 1234567890)))
+    ).resolves.toMatchObject({ historyId: "1234567890" });
+  });
+
+  it.each([
+    -1,
+    1.5,
+    Number.MAX_SAFE_INTEGER + 1,
+  ])("rejects invalid or imprecise numeric history ids: %s", async (historyId) => {
+    await expect(
+      verifier()(request(await token(), body(subscription, historyId)))
+    ).rejects.toMatchObject({ status: 400 });
   });
 
   it.each([
