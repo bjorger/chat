@@ -3922,17 +3922,25 @@ export class TelegramAdapter
           }
         }
 
-        for (const update of updates) {
+        const pendingUpdates = updates.map(async (update) => {
           try {
             await Promise.all(this.processUpdate(update) ?? []);
-            offset = update.update_id + 1;
+            return { update };
           } catch (error) {
+            return { error, update };
+          }
+        });
+
+        for (const pendingUpdate of pendingUpdates) {
+          const result = await pendingUpdate;
+          if ("error" in result) {
             this.logger.warn("Failed to process Telegram polled update", {
-              error: String(error),
-              updateId: update.update_id,
+              error: String(result.error),
+              updateId: result.update.update_id,
             });
             break;
           }
+          offset = result.update.update_id + 1;
         }
       } catch (error) {
         if (this.isAbortError(error)) {
