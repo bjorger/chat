@@ -13,14 +13,18 @@ import type {
   IHttpServerAdapter,
 } from "@microsoft/teams.apps";
 import type { Logger, WebhookOptions } from "chat";
+import type { TeamsWebhookVerifier } from "./types";
 
 export class BridgeHttpAdapter implements IHttpServerAdapter {
   private handler: HttpRouteHandler | null = null;
   private readonly webhookOptionsMap = new Map<string, WebhookOptions>();
   private readonly logger: Logger;
 
-  constructor(logger: Logger) {
+  private readonly webhookVerifier?: TeamsWebhookVerifier;
+
+  constructor(logger: Logger, webhookVerifier?: TeamsWebhookVerifier) {
     this.logger = logger;
+    this.webhookVerifier = webhookVerifier;
   }
 
   registerRoute(
@@ -39,6 +43,16 @@ export class BridgeHttpAdapter implements IHttpServerAdapter {
     this.logger.debug("Teams webhook received", {
       bodyLength: Buffer.byteLength(body),
     });
+
+    if (this.webhookVerifier) {
+      try {
+        if (!(await this.webhookVerifier(request, body))) {
+          return new Response("Unauthorized", { status: 401 });
+        }
+      } catch {
+        return new Response("Unauthorized", { status: 401 });
+      }
+    }
 
     let parsedBody: unknown;
     try {

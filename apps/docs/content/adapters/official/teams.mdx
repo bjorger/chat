@@ -97,8 +97,8 @@ Incoming Teams mentions are supported. Outgoing `@name` text, including multi-wo
 <TypeTable
   type={{
     appId: {
-      type: "string",
-      description: "Azure Bot App ID. Auto-detected from `TEAMS_APP_ID`.",
+      type: "string | (() => string | Promise<string>)",
+      description: "Azure Bot App ID or resolver called during initialization. Auto-detected from `TEAMS_APP_ID`.",
     },
     appPassword: {
       type: "string",
@@ -113,6 +113,10 @@ Incoming Teams mentions are supported. Outgoing `@name` text, including multi-wo
       type: "(scope: string | string[], tenantId?: string) => string | Promise<string>",
       description:
         "Custom token factory for outbound Bot Framework/Graph calls, for runtimes that can't reach Azure IMDS (so `federated` isn't reachable) but can still mint access tokens through an external mechanism.",
+    },
+    webhookVerifier: {
+      type: "(request: Request, body: string) => unknown | Promise<unknown>",
+      description: "Custom raw-body verifier that replaces Microsoft JWT verification. Return truthy to accept; throw or return falsy to reject.",
     },
     appType: {
       type: '"MultiTenant" | "SingleTenant"',
@@ -138,6 +142,27 @@ Incoming Teams mentions are supported. Outgoing `@name` text, including multi-wo
 />
 
 `appId` is required, along with one authentication method (`appPassword`, `federated`, or `token`). If more than one is configured, `token` takes precedence over `federated`, which takes precedence over `appPassword`.
+
+## Vercel Connect
+
+Use [Vercel Connect](/docs/vercel-connect) to resolve the bot's app ID and request short-lived tokens for Bot Framework and Microsoft Graph:
+
+```typescript
+import { createTeamsAdapter } from "@chat-adapter/teams";
+import { connectTeamsAdapter } from "@vercel/connect/chat";
+
+const teams = createTeamsAdapter({
+  ...connectTeamsAdapter("microsoft-teams/acme-teams"),
+});
+```
+
+The helper resolves `appId` during initialization and supplies a scope-aware `token` callback. It also verifies Connect-forwarded webhooks with Vercel OIDC instead of Microsoft's native JWT. Enable trigger forwarding to `/api/webhooks/teams` and omit `TEAMS_APP_ID` and `TEAMS_APP_PASSWORD` when using the helper.
+
+The callback requests separate tokens for `https://api.botframework.com/.default` and `https://graph.microsoft.com/.default`. Graph reads still require the appropriate installation and consent permissions; Connect uses the bot's home tenant for managed tokens.
+
+An `appId` resolver runs once during successful initialization. Call `await bot.initialize()` before using adapter methods directly; Chat initializes automatically before handling webhooks. `botUserId` becomes available after initialization when using a resolver.
+
+A custom `webhookVerifier` receives the incoming request and its raw body. Return a truthy value to accept, or return a falsy value or throw to reject with HTTP 401. Without a verifier, the adapter retains Microsoft's native JWT verification.
 
 ## Authentication
 
@@ -220,7 +245,7 @@ createTeamsAdapter({
 ```
 
 <Callout type="warn">
-The Teams SDK reads a generic `CLIENT_SECRET` environment variable and prefers it over the token factory. Make sure `CLIENT_SECRET` is not set in your deployment environment, or the bot will silently fall back to client-secret auth.
+A custom token factory takes precedence over configured credentials and client-secret environment variables, including `CLIENT_SECRET`.
 </Callout>
 
 ## Advanced

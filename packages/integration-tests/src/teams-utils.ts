@@ -206,20 +206,20 @@ export type MockTeamsApp = ReturnType<typeof createMockTeamsApp>;
 
 /**
  * Inject mock TeamsSDK App into Teams adapter.
- * Replaces the internal `app` and `bridgeAdapter` with mocks.
+ * Replaces the internal App instance and `bridgeAdapter` with mocks.
  */
 export function injectMockTeamsApp(
   adapter: TeamsAdapter,
   mockApp: MockTeamsApp
 ): void {
   const adapterInternal = adapter as unknown as {
-    app: unknown;
+    appInstance: unknown;
     bridgeAdapter: unknown;
   };
 
   // Replace the app with a mock that has the right API surface
   const config = (adapter as unknown as { config: { appId?: string } }).config;
-  adapterInternal.app = {
+  adapterInternal.appInstance = {
     id: config.appId || TEAMS_APP_ID,
     sendTo: mockApp.sendTo,
     api: mockApp.api,

@@ -45,7 +45,7 @@ export interface ProjectConfig extends AdapterSelection {
   shouldInstall: boolean;
   /**
    * Authenticate Connect-capable adapters (Slack, Discord, GitHub, Linear,
-   * Notion, Telegram) with Vercel Connect for outbound credentials. Defaults
+   * Notion, Teams, Telegram) with Vercel Connect for outbound credentials. Defaults
    * to `false`.
    */
   useConnect?: boolean;

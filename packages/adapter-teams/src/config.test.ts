@@ -17,14 +17,14 @@ describe("toAppOptions", () => {
     expect(options.tenantId).toBe("test-tenant-id");
   });
 
-  it("omits clientSecret when a token factory is provided", () => {
+  it("suppresses clientSecret when a token factory is provided", () => {
     const options = toAppOptions({
       appId: "test-client-id",
       appPassword: "should-be-ignored",
       token: async () => "custom-access-token",
     });
 
-    expect(options.clientSecret).toBeUndefined();
+    expect(options.clientSecret).toBe("");
   });
 
   it("ignores TEAMS_APP_PASSWORD env var when a token factory is provided", () => {
@@ -37,7 +37,7 @@ describe("toAppOptions", () => {
         token,
       });
 
-      expect(options.clientSecret).toBeUndefined();
+      expect(options.clientSecret).toBe("");
       expect(options.token).toBe(token);
     } finally {
       vi.unstubAllEnvs();

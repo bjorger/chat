@@ -203,9 +203,12 @@ describe("runPrompts", () => {
     ).rejects.toThrow("Use a valid npm package name");
   });
 
-  it("prompts for auth mode and applies Vercel Connect when chosen", async () => {
+  it.each([
+    "discord",
+    "teams",
+  ])("offers Vercel Connect for %s in interactive mode", async (slug) => {
     vi.mocked(text).mockResolvedValueOnce("my-bot").mockResolvedValueOnce("");
-    vi.mocked(multiselect).mockResolvedValueOnce(["discord"]);
+    vi.mocked(multiselect).mockResolvedValueOnce([slug]);
     vi.mocked(select)
       .mockResolvedValueOnce("memory")
       .mockResolvedValueOnce("connect");
@@ -249,12 +252,15 @@ describe("runPrompts", () => {
     expect(result?.useConnect).toBe(false);
   });
 
-  it("enables Vercel Connect with --connect on a flagged selection", async () => {
+  it.each([
+    "notion",
+    "teams",
+  ])("enables Vercel Connect for flagged %s selection", async (slug) => {
     const result = await runPrompts({
       connect: true,
       name: "my-bot",
       quiet: true,
-      selectedAdapters: ["notion", "memory"],
+      selectedAdapters: [slug, "memory"],
       yes: true,
     });
 
