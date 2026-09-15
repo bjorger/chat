@@ -1738,6 +1738,7 @@ export class GoogleChatAdapter implements Adapter<GoogleChatThreadId, unknown> {
     messageId: string,
     message: AdapterPostableMessage
   ): Promise<RawMessage<unknown>> {
+    this.assertMessageInSpace(threadId, messageId);
     try {
       // Check if message contains a card
       const card = extractCard(message);
@@ -1811,7 +1812,8 @@ export class GoogleChatAdapter implements Adapter<GoogleChatThreadId, unknown> {
     }
   }
 
-  async deleteMessage(_threadId: string, messageId: string): Promise<void> {
+  async deleteMessage(threadId: string, messageId: string): Promise<void> {
+    this.assertMessageInSpace(threadId, messageId);
     try {
       this.logger.debug("GChat API: spaces.messages.delete", { messageId });
 
@@ -1828,10 +1830,11 @@ export class GoogleChatAdapter implements Adapter<GoogleChatThreadId, unknown> {
   }
 
   async addReaction(
-    _threadId: string,
+    threadId: string,
     messageId: string,
     emoji: EmojiValue | string
   ): Promise<void> {
+    this.assertMessageInSpace(threadId, messageId);
     // Convert emoji (EmojiValue or string) to GChat unicode format
     const gchatEmoji = defaultEmojiResolver.toGChat(emoji);
 
@@ -1860,10 +1863,11 @@ export class GoogleChatAdapter implements Adapter<GoogleChatThreadId, unknown> {
   }
 
   async removeReaction(
-    _threadId: string,
+    threadId: string,
     messageId: string,
     emoji: EmojiValue | string
   ): Promise<void> {
+    this.assertMessageInSpace(threadId, messageId);
     // Convert emoji (EmojiValue or string) to GChat unicode format
     const gchatEmoji = defaultEmojiResolver.toGChat(emoji);
 
@@ -2665,6 +2669,23 @@ export class GoogleChatAdapter implements Adapter<GoogleChatThreadId, unknown> {
 
   decodeThreadId(threadId: string): GoogleChatThreadId {
     return decodeThreadId(threadId);
+  }
+
+  /**
+   * Google Chat message ids are full resource names
+   * (`spaces/{space}/messages/{message}`) that identify a message on their
+   * own, so the edit, delete, and reaction calls never consult the thread.
+   * Check that the message lives in the thread's space, so a caller cannot
+   * pair a permitted thread id with a message from another space.
+   */
+  private assertMessageInSpace(threadId: string, messageId: string): void {
+    const { spaceName } = this.decodeThreadId(threadId);
+    if (!messageId.startsWith(`${spaceName}/messages/`)) {
+      throw new ValidationError(
+        "gchat",
+        `Message "${messageId}" does not belong to space "${spaceName}" of thread "${threadId}"`
+      );
+    }
   }
 
   parseMessage(raw: unknown): Message<unknown> {

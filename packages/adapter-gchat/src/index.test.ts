@@ -20,6 +20,8 @@ import type {
   WorkspaceEventNotification,
 } from "./workspace-events";
 
+const FOREIGN_SPACE_REGEX = /does not belong to space/;
+
 const DM_SUFFIX_PATTERN = /:dm$/;
 const VERIFICATION_REQUIRED_PATTERN =
   /Webhook signature verification is required/;
@@ -1655,7 +1657,7 @@ describe("GoogleChatAdapter", () => {
       };
 
       await expect(
-        adapter.editMessage(threadId, "msg1", "edit")
+        adapter.editMessage(threadId, "spaces/ABC123/messages/msg1", "edit")
       ).rejects.toBeTruthy();
     });
   });
@@ -1690,8 +1692,79 @@ describe("GoogleChatAdapter", () => {
       };
 
       await expect(
-        adapter.deleteMessage("gchat:spaces/ABC123", "msg1")
+        adapter.deleteMessage(
+          "gchat:spaces/ABC123",
+          "spaces/ABC123/messages/msg1"
+        )
       ).rejects.toBeTruthy();
+    });
+  });
+
+  describe("message space check", () => {
+    const THREAD = "gchat:spaces/ABC123";
+    const FOREIGN_MESSAGE = "spaces/OTHER/messages/msg9";
+
+    function installSpyApi(adapter: GoogleChatAdapter) {
+      const api = {
+        spaces: {
+          messages: {
+            update: vi.fn().mockResolvedValue({ data: {} }),
+            delete: vi.fn().mockResolvedValue({}),
+            reactions: {
+              create: vi.fn().mockResolvedValue({}),
+              list: vi.fn().mockResolvedValue({ data: { reactions: [] } }),
+              delete: vi.fn().mockResolvedValue({}),
+            },
+          },
+        },
+      };
+      (adapter as any).chatApi = api;
+      return api;
+    }
+
+    it("editMessage rejects a message from another space", async () => {
+      const { adapter } = await createInitializedAdapter();
+      const api = installSpyApi(adapter);
+      await expect(
+        adapter.editMessage(THREAD, FOREIGN_MESSAGE, "edit")
+      ).rejects.toThrow(FOREIGN_SPACE_REGEX);
+      expect(api.spaces.messages.update).not.toHaveBeenCalled();
+    });
+
+    it("deleteMessage rejects a message from another space", async () => {
+      const { adapter } = await createInitializedAdapter();
+      const api = installSpyApi(adapter);
+      await expect(
+        adapter.deleteMessage(THREAD, FOREIGN_MESSAGE)
+      ).rejects.toThrow(FOREIGN_SPACE_REGEX);
+      expect(api.spaces.messages.delete).not.toHaveBeenCalled();
+    });
+
+    it("addReaction rejects a message from another space", async () => {
+      const { adapter } = await createInitializedAdapter();
+      const api = installSpyApi(adapter);
+      await expect(
+        adapter.addReaction(THREAD, FOREIGN_MESSAGE, "\u{1f44d}")
+      ).rejects.toThrow(FOREIGN_SPACE_REGEX);
+      expect(api.spaces.messages.reactions.create).not.toHaveBeenCalled();
+    });
+
+    it("removeReaction rejects a message from another space", async () => {
+      const { adapter } = await createInitializedAdapter();
+      const api = installSpyApi(adapter);
+      await expect(
+        adapter.removeReaction(THREAD, FOREIGN_MESSAGE, "\u{1f44d}")
+      ).rejects.toThrow(FOREIGN_SPACE_REGEX);
+      expect(api.spaces.messages.reactions.list).not.toHaveBeenCalled();
+    });
+
+    it("accepts a message in the thread's space", async () => {
+      const { adapter } = await createInitializedAdapter();
+      const api = installSpyApi(adapter);
+      await adapter.deleteMessage(THREAD, "spaces/ABC123/messages/msg1");
+      expect(api.spaces.messages.delete).toHaveBeenCalledWith({
+        name: "spaces/ABC123/messages/msg1",
+      });
     });
   });
 
@@ -1737,7 +1810,11 @@ describe("GoogleChatAdapter", () => {
       };
 
       await expect(
-        adapter.addReaction("gchat:spaces/ABC123", "msg1", "\u{1f44d}")
+        adapter.addReaction(
+          "gchat:spaces/ABC123",
+          "spaces/ABC123/messages/msg1",
+          "\u{1f44d}"
+        )
       ).rejects.toThrow(AdapterRateLimitError);
     });
   });
