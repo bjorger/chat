@@ -1,0 +1,33 @@
+.changeset/warm-clouds-wait.md
+  s_77f94fff0ad359::t_a10cdfc31f442b 1-5
+apps/docs/content/docs/error-handling.mdx
+  s_77f94fff0ad359::t_a10cdfc31f442b 160-162,164-178
+  s_77f94fff0ad359::t_45912a5088b07c 163
+packages/chat/src/types.ts
+  s_77f94fff0ad359::t_c28286135e6e0b 215-219
+  s_77f94fff0ad359::t_45912a5088b07c 213-214
+  s_77f94fff0ad359::t_605622964fd043 212
+packages/chat/src/chat.test.ts
+  s_77f94fff0ad359::t_a10cdfc31f442b 32,378-473,475-499
+  s_77f94fff0ad359::t_139e4d707b5491 474
+  s_77f94fff0ad359::t_4f019bee22bcc2 500-501
+packages/chat/src/chat.ts
+  s_77f94fff0ad359::t_7f4b06ebc03904 1060-1062
+  s_77f94fff0ad359::t_a10cdfc31f442b 1068,1179-1180,1189,1192,1350-1351,1360
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "2f37dc855f285cdb08897329f7659bfb62ae2c6c",
+  "prompts": {},
+  "sessions": {
+    "s_77f94fff0ad359": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0a607-448f-7e43-87a9-363b5e32478b",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Robin Braumann <robin.braumann@n8n.io>"
+    }
+  }
+}
