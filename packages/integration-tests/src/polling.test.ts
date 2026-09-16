@@ -180,7 +180,101 @@ describe("Telegram polling admission", () => {
     ["command", command],
     ["action", action],
     ["reaction", reaction],
-  ] as const)("retries a failed %s and waits for successful admission", async (_name, update) => {
+  ] as const)("processes beyond a full page despite a permanently failing %s", async (_name, update) => {
+    const updates = [
+      update,
+      ...Array.from({ length: 100 }, (_, index) => ({
+        ...message(index + 2),
+        message: {
+          ...message(index + 2).message,
+          chat: { id: 2, type: "private" as const },
+        },
+      })),
+      ...album().map((part) => ({
+        ...part,
+        update_id: part.update_id + 101,
+        message: { ...part.message, chat: { id: 3, type: "private" as const } },
+      })),
+    ];
+    const test = fixture(updates);
+    const fail = vi.fn(() => {
+      throw new Error("Forbidden: bot was blocked by the user");
+    });
+    const received: string[] = [];
+    test.bot.onNewMention((thread) => {
+      if (thread.id === "telegram:1") {
+        fail();
+      }
+      received.push(thread.id);
+    });
+    test.bot.onSlashCommand(fail);
+    test.bot.onAction(fail);
+    test.bot.onReaction(fail);
+    try {
+      await test.start(100, 0);
+      await vi.waitFor(() => expect(test.polls.at(-1)?.offset).toBe(104), {
+        timeout: 3000,
+      });
+      await vi.waitFor(() => expect(received).toContain("telegram:3"), {
+        timeout: 5000,
+      });
+      expect(received.filter((id) => id === "telegram:2")).toHaveLength(100);
+      expect(await test.state.get(checkpoint)).toMatchObject({
+        offset: 104,
+        pending: [{ update }],
+      });
+    } finally {
+      await test.stop();
+    }
+  });
+
+  it("does not acknowledge failed ordinary updates when saving their retry fails", async () => {
+    const test = fixture([
+      ordinary,
+      {
+        ...message(2),
+        message: { ...message(2).message, chat: { id: 2, type: "private" } },
+      },
+    ]);
+    const save = test.state.set.bind(test.state);
+    let failing = true;
+    vi.spyOn(test.state, "set").mockImplementation(async (key, value, ttl) => {
+      if (key === checkpoint && failing) {
+        throw new Error("Storage unavailable");
+      }
+      await save(key, value, ttl);
+    });
+    const handler = vi.fn((thread: Thread) => {
+      if (thread.id === "telegram:1") {
+        throw new Error("Reply failed");
+      }
+    });
+    test.bot.onNewMention(handler);
+    try {
+      await test.start();
+      await vi.waitFor(() => expect(test.polls.length).toBeGreaterThan(1));
+      expect(test.polls.every((poll) => poll.offset === undefined)).toBe(true);
+      expect(
+        handler.mock.calls.filter(([thread]) => thread.id === "telegram:2")
+      ).toHaveLength(1);
+      failing = false;
+      await vi.waitFor(() => expect(test.polls.at(-1)?.offset).toBe(3));
+      expect(await test.state.get(checkpoint)).toMatchObject({
+        offset: 3,
+        pending: [{ update: ordinary }],
+      });
+    } finally {
+      failing = false;
+      await test.stop();
+    }
+  });
+
+  it.each([
+    ["message", ordinary],
+    ["command", command],
+    ["action", action],
+    ["reaction", reaction],
+  ] as const)("saves a failed %s before acknowledgement and retains it until retry succeeds", async (_name, update) => {
     const test = fixture([update]);
     const gate = deferred();
     const handler = vi.fn(async () => {
@@ -195,10 +289,18 @@ describe("Telegram polling admission", () => {
     test.bot.onReaction(handler);
     try {
       await test.start();
-      await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(2));
-      expect(test.polls.every((poll) => poll.offset === undefined)).toBe(true);
+      await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(2), {
+        timeout: 3000,
+      });
+      expect(test.polls.some((poll) => poll.offset === 2)).toBe(true);
+      expect(await test.state.get(checkpoint)).toMatchObject({
+        offset: 2,
+        pending: [{ update }],
+      });
       gate.resolve();
-      await vi.waitFor(() => expect(test.polls.at(-1)?.offset).toBe(2));
+      await vi.waitFor(async () =>
+        expect(await test.state.get(checkpoint)).toBeNull()
+      );
       expect(handler).toHaveBeenCalledTimes(2);
     } finally {
       gate.resolve();
@@ -220,8 +322,86 @@ describe("Telegram polling admission", () => {
       expect(test.polls).toHaveLength(1);
       gate.resolve();
       await vi.waitFor(() => expect(test.polls.at(-1)?.offset).toBe(3));
-      expect(failed).toHaveBeenCalledTimes(2);
+      await vi.waitFor(() => expect(failed).toHaveBeenCalledTimes(2), {
+        timeout: 3000,
+      });
       expect(pending).toHaveBeenCalledTimes(1);
+    } finally {
+      gate.resolve();
+      await test.stop();
+    }
+  });
+
+  it.each([
+    ["message", ordinary],
+    ["command", command],
+    ["action", action],
+    ["reaction", reaction],
+  ] as const)("recovers a saved failed %s after process loss", async (_name, update) => {
+    const first = fixture([update]);
+    const fail = vi.fn().mockRejectedValue(new Error("Admission failed"));
+    first.bot.onNewMention(fail);
+    first.bot.onSlashCommand(fail);
+    first.bot.onAction(fail);
+    first.bot.onReaction(fail);
+    let saved: unknown;
+    try {
+      await first.start();
+      await vi.waitFor(() => expect(first.polls.at(-1)?.offset).toBe(2));
+      saved = await first.state.get(checkpoint);
+      expect(saved).toMatchObject({ offset: 2, pending: [{ update }] });
+    } finally {
+      await first.stop();
+    }
+    const state = createMemoryState();
+    await state.connect();
+    await state.set(checkpoint, JSON.parse(JSON.stringify(saved)));
+    await state.set("dedupe:telegram:1:1", true);
+    const second = fixture([], state);
+    const handler = vi.fn();
+    second.bot.onNewMention(handler);
+    second.bot.onSlashCommand(handler);
+    second.bot.onAction(handler);
+    second.bot.onReaction(handler);
+    try {
+      await second.start();
+      await vi.waitFor(
+        async () => expect(await state.get(checkpoint)).toBeNull(),
+        { timeout: 3000 }
+      );
+      expect(handler).toHaveBeenCalledOnce();
+      expect(second.polls.every((poll) => poll.offset === 2)).toBe(true);
+    } finally {
+      await second.stop();
+    }
+  });
+
+  it("waits for the retry write to finish before acknowledging a failed update", async () => {
+    const test = fixture([ordinary]);
+    const gate = deferred();
+    const save = test.state.set.bind(test.state);
+    let writing = false;
+    vi.spyOn(test.state, "set").mockImplementation(async (key, value, ttl) => {
+      if (key === checkpoint) {
+        writing = true;
+        await gate.promise;
+      }
+      await save(key, value, ttl);
+    });
+    test.bot.onNewMention(() => {
+      throw new Error("Reply failed");
+    });
+    try {
+      await test.start();
+      await vi.waitFor(() => expect(writing).toBe(true));
+      expect(test.polls).toHaveLength(1);
+      expect(await test.state.get(checkpoint)).toBeNull();
+      gate.resolve();
+      await vi.waitFor(() => expect(test.polls.at(-1)?.offset).toBe(2));
+      expect(await test.state.get(checkpoint)).toMatchObject({
+        offset: 2,
+        pending: [{ update: ordinary }],
+      });
     } finally {
       gate.resolve();
       await test.stop();

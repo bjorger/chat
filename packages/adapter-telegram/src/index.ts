@@ -4019,6 +4019,31 @@ export class TelegramAdapter
     let drained = false;
     const MAX_BACKOFF_MS = 30_000;
     const completed = new Set<number>();
+    const retry = (entries: TelegramPollingEntry[], error: unknown) => {
+      const attempts =
+        Math.max(...entries.map((entry) => entry.attempts ?? 0)) + 1;
+      const delay = Math.max(
+        Math.min(
+          Math.max(
+            config.retryDelayMs,
+            TELEGRAM_DEFAULT_POLLING_RETRY_DELAY_MS
+          ) *
+            2 ** Math.min(attempts - 1, 30),
+          MAX_BACKOFF_MS
+        ),
+        error instanceof AdapterRateLimitError
+          ? (error.retryAfter ?? 0) * 1000
+          : 0
+      );
+      const retryAt = Date.now() + delay;
+      this.logger.warn("Telegram polling update processing failed", {
+        error: String(error),
+        updateId: entries[0].update.update_id,
+        attempts,
+        retryAt,
+      });
+      return { attempts, retryAt };
+    };
 
     while (this.pollingActive) {
       this.pollingAbortController = new AbortController();
@@ -4048,7 +4073,10 @@ export class TelegramAdapter
           Math.max(
             ...entries.map((entry) =>
               Math.max(
-                entry.receivedAt + TELEGRAM_INCOMING_MEDIA_GROUP_SETTLE_MS,
+                entry.receivedAt +
+                  (this.pollingGroup(entry.update)
+                    ? TELEGRAM_INCOMING_MEDIA_GROUP_SETTLE_MS
+                    : 0),
                 entry.retryAt ?? 0
               )
             )
@@ -4079,32 +4107,13 @@ export class TelegramAdapter
             if (!failed) {
               continue;
             }
-            const attempts =
-              Math.max(...entries.map((entry) => entry.attempts ?? 0)) + 1;
-            const error = failures.get(failed.update.update_id);
-            const delay = Math.max(
-              Math.min(
-                Math.max(
-                  config.retryDelayMs,
-                  TELEGRAM_DEFAULT_POLLING_RETRY_DELAY_MS
-                ) *
-                  2 ** Math.min(attempts - 1, 30),
-                MAX_BACKOFF_MS
-              ),
-              error instanceof AdapterRateLimitError
-                ? (error.retryAfter ?? 0) * 1000
-                : 0
+            const scheduled = retry(
+              entries,
+              failures.get(failed.update.update_id)
             );
-            const retryAt = Date.now() + delay;
             for (const entry of entries) {
-              retries.set(entry.update.update_id, { attempts, retryAt });
+              retries.set(entry.update.update_id, scheduled);
             }
-            this.logger.warn("Telegram polling album processing failed", {
-              error: String(error),
-              updateId: failed.update.update_id,
-              attempts,
-              retryAt,
-            });
           }
           const pending = checkpoint.pending
             .filter((entry) => !completed.has(entry.update.update_id))
@@ -4168,15 +4177,18 @@ export class TelegramAdapter
           updates.filter((update) => !this.pollingGroup(update)),
           completed
         );
-        const failures = new Map<number, unknown>();
-        for (const result of results) {
-          if ("error" in result) {
-            failures.set(result.update.update_id, result.error);
-          }
-        }
         const pending = new Map(
           checkpoint.pending.map((entry) => [entry.update.update_id, entry])
         );
+        for (const result of results) {
+          if ("error" in result) {
+            const entry = { update: result.update, receivedAt: Date.now() };
+            pending.set(result.update.update_id, {
+              ...entry,
+              ...retry([entry], result.error),
+            });
+          }
+        }
         for (const update of updates) {
           if (
             this.pollingGroup(update) &&
@@ -4188,9 +4200,6 @@ export class TelegramAdapter
         }
         let offset = checkpoint.offset;
         for (const update of updates) {
-          if (failures.has(update.update_id)) {
-            break;
-          }
           offset = update.update_id + 1;
         }
         const next = { offset, pending: [...pending.values()] };
@@ -4202,9 +4211,6 @@ export class TelegramAdapter
           if (id < (offset ?? 0)) {
             completed.delete(id);
           }
-        }
-        if (failures.size > 0) {
-          throw failures.values().next().value;
         }
         if (updates.length === 0 && remaining !== undefined) {
           await this.sleep(

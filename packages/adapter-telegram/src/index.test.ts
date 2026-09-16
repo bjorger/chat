@@ -1750,7 +1750,7 @@ describe("TelegramAdapter", () => {
     expect(adapter.isPolling).toBe(false);
   });
 
-  it("waits for polled message processing before acknowledging updates", async () => {
+  it("waits for polled message processing and saves failures before acknowledging updates", async () => {
     let settled = false;
     let settleProcessing: (error?: Error) => void = () => {};
     const processing = new Promise<void>((resolve, reject) => {
@@ -1843,7 +1843,23 @@ describe("TelegramAdapter", () => {
       ) as {
         offset?: number;
       };
-      expect(secondPollBody.offset).toBeUndefined();
+      expect(secondPollBody.offset).toBe(11);
+      expect(
+        await chat
+          .getState()
+          .get(
+            `telegram:polling:${createHash("sha256").update("999").digest("hex")}`
+          )
+      ).toMatchObject({
+        offset: 11,
+        pending: [
+          {
+            update: { update_id: 10 },
+            attempts: 1,
+            retryAt: expect.any(Number),
+          },
+        ],
+      });
     } finally {
       settleProcessing();
       await adapter.stopPolling();
