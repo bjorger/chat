@@ -260,6 +260,12 @@ const bot = new Chat({
 
 Polling and webhooks are mutually exclusive in Telegram. `mode: "polling"` deletes the webhook by default before calling `getUpdates`.
 
+Polling waits for message, command, action and reaction processing before advancing its offset. Failed processing is retried with backoff. A handler can return after saving its input to your durable queue; it does not need to wait for model execution.
+
+Albums are buffered in bot-scoped state so parts arriving in separate polling responses can be combined. The adapter saves the parts and offset before acknowledging them, retains the buffer until processing succeeds, and resumes saved buffers when polling starts again. Album grouping uses a short settling window because Telegram does not provide an end-of-album event.
+
+Use a persistent state adapter, such as Redis or PostgreSQL, for recovery across process restarts. Memory state is suitable for local development but cannot preserve acknowledged album parts after process loss. Run only one polling instance per bot. Handlers must tolerate redelivery: a crash after an application side effect but before completion is saved can repeat that side effect.
+
 ### Auto mode
 
 `mode: "auto"` (the default) checks `getWebhookInfo`: if a webhook URL is set, it uses webhook mode; otherwise it falls back to polling on long-running runtimes. If `getWebhookInfo` fails, the adapter stays in webhook mode (safe fallback).
