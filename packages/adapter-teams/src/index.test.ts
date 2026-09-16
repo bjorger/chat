@@ -8,7 +8,7 @@ import {
   threadIdContract,
 } from "@chat-adapter/tests";
 import type { IStreamer } from "@microsoft/teams.apps";
-import { ConsoleLogger, getEmoji } from "chat";
+import { type ChatInstance, ConsoleLogger, getEmoji } from "chat";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TeamsActivityAttachment } from "./attachments";
 import { createTeamsAdapter, TeamsAdapter, type TeamsThreadId } from "./index";
@@ -372,6 +372,36 @@ describe("TeamsAdapter", () => {
       });
       expect(adapter.name).toBe("teams");
     });
+  });
+
+  it("preserves the empty dialog response when an action rejects", async () => {
+    class DialogAdapter extends TeamsAdapter {
+      open(chat: ChatInstance) {
+        this.chat = chat;
+        return this.handleDialogOpen({
+          activity: {
+            type: "invoke",
+            name: "task/fetch",
+            id: "activity",
+            serviceUrl: TEST_SERVICE_URL,
+            from: { id: "user", name: "User" },
+            conversation: { id: "conversation", conversationType: "personal" },
+            value: { data: { actionId: "review" } },
+          },
+        } as Parameters<typeof this.handleDialogOpen>[0]);
+      }
+    }
+    const adapter = new DialogAdapter({
+      appId: "test-app",
+      appPassword: "test",
+      logger,
+    });
+    const chat = createMockChatInstance({
+      overrides: {
+        processAction: vi.fn().mockRejectedValue(new Error("Admission failed")),
+      },
+    });
+    await expect(adapter.open(chat)).resolves.toBeUndefined();
   });
 
   describe("streaming", () => {

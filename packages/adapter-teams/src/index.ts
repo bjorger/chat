@@ -817,7 +817,10 @@ export class TeamsAdapter implements Adapter<TeamsThreadId, unknown> {
       }),
       // If the action handler finishes without calling openModal, resolve
       // immediately instead of waiting for the timeout.
-      actionPromise.then(() => null),
+      actionPromise.then(
+        () => null,
+        () => null
+      ),
     ]);
 
     if (timer) {

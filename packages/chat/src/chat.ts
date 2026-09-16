@@ -1054,7 +1054,13 @@ export class Chat<
         typeof messageOrFactory === "function"
           ? await messageOrFactory()
           : messageOrFactory;
-      await this.handleIncomingMessage(adapter, threadId, message);
+      if (options?.deduplicate === false) {
+        await runInConversation(threadId, () =>
+          this.routeIncomingMessage(adapter, threadId, message, false)
+        );
+      } else {
+        await this.handleIncomingMessage(adapter, threadId, message);
+      }
     })();
 
     // Track via waitUntil with errors swallowed (existing webhook semantics —
@@ -1151,10 +1157,11 @@ export class Chat<
   processReaction(
     event: Omit<ReactionEvent, "adapter" | "thread"> & { adapter?: Adapter },
     options?: WebhookOptions
-  ): void {
+  ): Promise<void> {
     const task = runInConversation(event.threadId, () =>
       this.handleReactionEvent(event)
-    ).catch((err) => {
+    );
+    const tracked = task.catch((err) => {
       this.logger.error("Reaction processing error", {
         error: err,
         emoji: event.emoji,
@@ -1163,8 +1170,9 @@ export class Chat<
     });
 
     if (options?.waitUntil) {
-      options.waitUntil(task);
+      options.waitUntil(tracked);
     }
+    return task;
   }
 
   /**
@@ -1177,7 +1185,8 @@ export class Chat<
   ): Promise<void> {
     const task = runInConversation(event.threadId, () =>
       this.handleActionEvent(event, options)
-    ).catch((err) => {
+    );
+    const tracked = task.catch((err) => {
       this.logger.error("Action processing error", {
         error: err,
         actionId: event.actionId,
@@ -1186,7 +1195,7 @@ export class Chat<
     });
 
     if (options?.waitUntil) {
-      options.waitUntil(task);
+      options.waitUntil(tracked);
     }
 
     return task;
@@ -1346,8 +1355,9 @@ export class Chat<
       channelId: string;
     },
     options: WebhookOptions | undefined
-  ): void {
-    const task = this.handleSlashCommandEvent(event, options).catch((err) => {
+  ): Promise<void> {
+    const task = this.handleSlashCommandEvent(event, options);
+    const tracked = task.catch((err) => {
       this.logger.error("Slash command processing error", {
         error: err,
         command: event.command,
@@ -1356,8 +1366,9 @@ export class Chat<
     });
 
     if (options?.waitUntil) {
-      options.waitUntil(task);
+      options.waitUntil(tracked);
     }
+    return task;
   }
 
   processAssistantThreadStarted(
@@ -2342,7 +2353,8 @@ export class Chat<
   private async routeIncomingMessage(
     adapter: Adapter,
     threadId: string,
-    message: Message
+    message: Message,
+    deduplicate = true
   ): Promise<void> {
     setMessageAdapter(message, adapter);
 
@@ -2364,6 +2376,11 @@ export class Chat<
       return;
     }
 
+    if (!deduplicate) {
+      await this.dispatchIncomingMessage(adapter, threadId, message);
+      return;
+    }
+
     // Deduplicate messages atomically - same message can arrive via multiple paths
     // (e.g., Slack message + app_mention events, GChat direct webhook + Pub/Sub)
     const dedupeKey = `dedupe:${adapter.name}:${message.id}`;
@@ -2380,6 +2397,14 @@ export class Chat<
       return;
     }
 
+    await this.dispatchIncomingMessage(adapter, threadId, message);
+  }
+
+  private async dispatchIncomingMessage(
+    adapter: Adapter,
+    threadId: string,
+    message: Message
+  ): Promise<void> {
     // Persist incoming message BEFORE acquiring the lock.
     // If the lock is already held (e.g., bot is processing a previous message),
     // we still want to save this message to history so it's not lost.

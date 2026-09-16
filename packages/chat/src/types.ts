@@ -196,6 +196,7 @@ export interface ChatConfig<
  * Options for webhook handling.
  */
 export interface WebhookOptions {
+  deduplicate?: boolean;
   /**
    * Override the default modal-opening behavior to handle it inline
    * within the current webhook response cycle.
@@ -862,7 +863,7 @@ export interface ChatInstance {
   processReaction(
     event: Omit<ReactionEvent, "adapter" | "thread"> & { adapter?: Adapter },
     options?: WebhookOptions
-  ): void;
+  ): Promise<void> | void;
 
   /**
    * Process an incoming slash command from an adapter.
@@ -877,7 +878,7 @@ export interface ChatInstance {
       channelId: string;
     },
     options: WebhookOptions | undefined
-  ): void;
+  ): Promise<void> | void;
 
   /** Optional so custom ChatInstance implementations predating it keep compiling. */
   processUninstalled?(event: UninstalledEvent, options?: WebhookOptions): void;

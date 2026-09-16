@@ -289,6 +289,8 @@ decodeThreadId(threadId: string): MatrixThreadId {
 3. Call `this.chat.processMessage()` with positional args — it handles `waitUntil` internally
 4. Return a fast 200 response immediately
 
+Polling transports should await the promises returned by `processMessage`, `processAction`, `processSlashCommand` and `processReaction` before acknowledging input. These promises reject on handler failure; the default `waitUntil` task still logs and absorbs errors for webhook responses. A transport that owns deduplication and recovery, such as Telegram polling, can pass `{ deduplicate: false }` to `processMessage` to bypass the core message deduplication cache. Leave deduplication enabled for ordinary webhook delivery.
+
 ```typescript title="src/adapter.ts" lineNumbers
 async handleWebhook(
   request: Request,
