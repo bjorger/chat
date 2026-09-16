@@ -100,7 +100,7 @@ const connectAdapterSection = (
 ): string[] => {
   const lines = [
     `# ${adapter.name} (Vercel Connect)`,
-    `# Vercel Connect connector UID (for example: ${adapter.slug}/your-connector)`,
+    `# Vercel Connect connector UID (for example: ${connect.connectorService ?? adapter.slug}/your-connector)`,
     `${connect.connectorEnvVar}=`,
   ];
   for (const extra of connect.extraEnv ?? []) {

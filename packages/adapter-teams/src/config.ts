@@ -8,7 +8,7 @@ import type { TeamsAdapterConfig } from "./types";
  *
  */
 export function toAppOptions(
-  config: TeamsAdapterConfig
+  config: Omit<TeamsAdapterConfig, "appId"> & { appId?: string }
 ): Omit<AppOptions<IPlugin>, "httpServerAdapter"> {
   if (config.certificate) {
     throw new Error(
@@ -41,6 +41,8 @@ export function toAppOptions(
   return {
     ...(clientId ? { clientId } : {}),
     ...(clientSecret ? { clientSecret } : {}),
+    // Empty string suppresses the SDK's generic CLIENT_SECRET env fallback.
+    ...(config.token ? { clientSecret: "" } : {}),
     ...(tenantId ? { tenantId } : {}),
     ...(managedIdentityClientId ? { managedIdentityClientId } : {}),
     ...(config.token ? { token: config.token } : {}),

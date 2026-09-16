@@ -157,3 +157,26 @@ bot.onNewMention(async (thread, message) => {
   }
 });
 ```
+
+## Propagating webhook handler errors
+
+Message, action, and slash command handler errors are logged but, by default, tasks passed to `waitUntil` fulfill. Hosts that collect and await those tasks can opt in to observing failures and choose an error response:
+
+```typescript
+const tasks: Promise<unknown>[] = [];
+const response = await chat.webhooks.slack(request, {
+  waitUntil: (task) => tasks.push(task),
+  propagateHandlerErrors: true,
+});
+const results = await Promise.allSettled(tasks);
+
+return results.some((result) => result.status === "rejected")
+  ? new Response("Handler failed", { status: 500 })
+  : response;
+```
+
+This option only exposes handler failures through the supplied promise. It does not automatically change a webhook response, including when using Vercel's native `waitUntil`.
+
+Keep handlers short when awaiting them before responding. [Slack requires acknowledgement within three seconds](https://docs.slack.dev/apis/events-api/#responding-to-events), so move long-running work outside the webhook response path.
+
+Error propagation does not guarantee retries or durable delivery. SDK deduplication can skip redelivered events after a handler fails, so returning `500` alone does not ensure the handler runs again.

@@ -126,44 +126,75 @@ function resolveTeamsReactionType(
 export class TeamsAdapter implements Adapter<TeamsThreadId, unknown> {
   readonly name = "teams";
   readonly userName: string;
-  readonly botUserId?: string;
+  private appInstance?: TeamsApp;
+  private graphReaderInstance?: TeamsGraphReader;
+  private initialization?: Promise<void>;
+  private handlersRegistered = false;
 
-  protected readonly app: TeamsApp;
+  get botUserId(): string | undefined {
+    return this.appInstance?.id ? `28:${this.appInstance.id}` : undefined;
+  }
+
+  protected get app(): TeamsApp {
+    if (!this.appInstance) {
+      throw new ValidationError(
+        "teams",
+        "appId has not been resolved. Ensure chat.initialize() has completed."
+      );
+    }
+    return this.appInstance;
+  }
+
+  protected get graphReader(): TeamsGraphReader {
+    if (!this.graphReaderInstance) {
+      throw new ValidationError(
+        "teams",
+        "appId has not been resolved. Ensure chat.initialize() has completed."
+      );
+    }
+    return this.graphReaderInstance;
+  }
   protected readonly bridgeAdapter: BridgeHttpAdapter;
   protected chat: ChatInstance | null = null;
   protected readonly logger: Logger;
   protected readonly formatConverter = new TeamsFormatConverter();
   protected readonly config: TeamsAdapterConfig;
-  protected readonly graphReader: TeamsGraphReader;
   private readonly activeStreams = new Map<string, IStreamer>();
 
   constructor(config: TeamsAdapterConfig = {}) {
-    this.config = config;
+    this.config = { ...config };
     this.logger = config.logger ?? new ConsoleLogger("info").child("teams");
     this.userName = config.userName || "bot";
 
-    // Create the BridgeHttpAdapter for serverless dispatch
-    this.bridgeAdapter = new BridgeHttpAdapter(this.logger);
+    this.bridgeAdapter = new BridgeHttpAdapter(
+      this.logger,
+      config.webhookVerifier
+    );
+    if (typeof config.appId !== "function") {
+      this.createApp(config.appId);
+    }
+  }
 
-    // Convert our public config (appId/appPassword/appTenantId) to Teams SDK AppOptions
-    this.app = new TeamsApp({
-      ...toAppOptions(config),
+  private createApp(appId?: string): void {
+    const app = new TeamsApp({
+      ...toAppOptions({ ...this.config, appId }),
       client: {
         headers: { "User-Agent": "Vercel.ChatSDK" },
       },
       httpServerAdapter: this.bridgeAdapter,
+      // The bridge verifies every request before it reaches the SDK handler.
+      skipAuth: Boolean(this.config.webhookVerifier),
     });
-
-    this.botUserId = this.app.id ? `28:${this.app.id}` : undefined;
-
-    this.graphReader = new TeamsGraphReader({
-      botId: this.app.id ?? "",
-      graph: this.app.graph,
+    const graphReader = new TeamsGraphReader({
+      botId: app.id ?? "",
+      graph: app.graph,
       logger: this.logger,
       formatConverter: this.formatConverter,
       getGraphContext: (baseConversationId) =>
         this.getGraphContext(baseConversationId),
     });
+    this.appInstance = app;
+    this.graphReaderInstance = graphReader;
   }
 
   /**
@@ -800,6 +831,7 @@ export class TeamsAdapter implements Adapter<TeamsThreadId, unknown> {
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     const actionPromise = this.chat.processAction(actionEvent, {
+      ...webhookOptions,
       waitUntil: webhookOptions?.waitUntil ?? (() => {}),
       onOpenModal: async (modal, contextId) => {
         resolveModal({ modal, contextId });
@@ -1065,7 +1097,30 @@ export class TeamsAdapter implements Adapter<TeamsThreadId, unknown> {
 
   async initialize(chat: ChatInstance): Promise<void> {
     this.chat = chat;
-    this.registerEventHandlers();
+    if (!this.initialization) {
+      this.initialization = this.initializeApp().catch((error: unknown) => {
+        this.initialization = undefined;
+        throw error;
+      });
+    }
+    await this.initialization;
+  }
+
+  private async initializeApp(): Promise<void> {
+    if (!this.appInstance && typeof this.config.appId === "function") {
+      const appId = await this.config.appId();
+      if (typeof appId !== "string" || appId.trim().length === 0) {
+        throw new ValidationError(
+          "teams",
+          "appId resolver must return a nonempty string."
+        );
+      }
+      this.createApp(appId);
+    }
+    if (!this.handlersRegistered) {
+      this.registerEventHandlers();
+      this.handlersRegistered = true;
+    }
     await this.app.initialize();
   }
 
@@ -1934,7 +1989,7 @@ export class TeamsAdapter implements Adapter<TeamsThreadId, unknown> {
    * so the comparison is case-insensitive.
    */
   private isBotAccountId(accountId: string): boolean {
-    const appId = this.app.id?.toLowerCase();
+    const appId = this.appInstance?.id?.toLowerCase();
     if (!appId) {
       return false;
     }
@@ -1960,4 +2015,5 @@ export type {
   TeamsAuthCertificate,
   TeamsAuthFederated,
   TeamsThreadId,
+  TeamsWebhookVerifier,
 } from "./types";

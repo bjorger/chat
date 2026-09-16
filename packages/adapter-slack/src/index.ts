@@ -3385,6 +3385,9 @@ export class SlackAdapter implements Adapter<SlackThreadId, unknown> {
             error,
             threadId: routedThreadId,
           });
+          if (options?.propagateHandlerErrors && options.waitUntil) {
+            throw error;
+          }
         }
         await this.applyConfiguredSessionTitle(event);
       })();

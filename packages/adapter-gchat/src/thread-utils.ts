@@ -49,6 +49,39 @@ export function decodeThreadId(threadId: string): GoogleChatThreadId {
   return { spaceName, threadName, isDM };
 }
 
+/** Google Chat message resource name data */
+export interface GoogleChatMessageName {
+  /** Message segment, e.g. `FGEOaAwNIcs.FGEOaAwNIcs` or `client-my-id` */
+  messageId: string;
+  /** Space resource name, e.g. `spaces/AAQAJ9CXYcg` */
+  spaceName: string;
+}
+
+// Exactly `spaces/{space}/messages/{message}`. Segments are the characters
+// Google uses in resource ids; a dot may only join two non-empty groups, so
+// `.` and `..` segments, empty segments, `?`, `#`, `%`, `/`, and whitespace
+// are all rejected before the name reaches the API.
+const MESSAGE_NAME_PATTERN =
+  /^spaces\/([A-Za-z0-9_-]+)\/messages\/([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)$/;
+
+/**
+ * Parse a Google Chat message resource name.
+ *
+ * Message ids identify a message on their own, so anything that lets a name
+ * resolve somewhere other than it appears to (path traversal, query strings,
+ * percent-encoding) must be rejected rather than normalized downstream.
+ */
+export function parseMessageName(messageId: string): GoogleChatMessageName {
+  const match = MESSAGE_NAME_PATTERN.exec(messageId);
+  if (!match) {
+    throw new ValidationError(
+      "gchat",
+      `Invalid Google Chat message id: ${JSON.stringify(messageId)} (expected spaces/{space}/messages/{message})`
+    );
+  }
+  return { spaceName: `spaces/${match[1]}`, messageId: match[2] as string };
+}
+
 /**
  * Check if a thread is a direct message conversation.
  * Checks for the :dm marker in the thread ID which is set when

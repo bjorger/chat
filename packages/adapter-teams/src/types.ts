@@ -17,11 +17,20 @@ export interface TeamsAuthFederated {
   clientId: string;
 }
 
+/**
+ * Verify a forwarded webhook instead of Microsoft's native JWT.
+ * Return a truthy value to accept; throw or return a falsy value to reject.
+ */
+export type TeamsWebhookVerifier = (
+  request: Request,
+  body: string
+) => unknown | Promise<unknown>;
+
 export interface TeamsAdapterConfig {
   /** Override the Teams Bot Framework service URL (e.g. for GCC-High environments). Defaults to TEAMS_API_URL env var. */
   apiUrl?: string;
-  /** Microsoft App ID. Defaults to TEAMS_APP_ID env var. */
-  appId?: string;
+  /** Microsoft App ID or resolver, resolved during initialize(). Defaults to TEAMS_APP_ID env var. */
+  appId?: string | (() => string | Promise<string>);
   /** Microsoft App Password. Defaults to TEAMS_APP_PASSWORD env var. */
   appPassword?: string;
   /** Microsoft App Tenant ID. Defaults to TEAMS_APP_TENANT_ID env var. */
@@ -42,9 +51,8 @@ export interface TeamsAdapterConfig {
    * `federated` managed identity isn't reachable) but still need to mint access tokens
    * through an external mechanism (e.g. a workload-identity federation bridge).
    *
-   * Note: the underlying Teams SDK also reads a generic `CLIENT_SECRET` env var and
-   * prefers client-secret auth over the token factory when both are present. Make sure
-   * `CLIENT_SECRET` is not set in the deployment environment when using this option.
+   * Takes precedence over appPassword, federated credentials, and client-secret
+   * environment variables, including CLIENT_SECRET.
    */
   token?: (
     scope: string | string[],
@@ -52,6 +60,8 @@ export interface TeamsAdapterConfig {
   ) => string | Promise<string>;
   /** Override bot username (optional) */
   userName?: string;
+  /** Custom verifier used instead of Microsoft JWT verification for inbound webhooks. */
+  webhookVerifier?: TeamsWebhookVerifier;
 }
 
 /** Teams-specific thread ID data */

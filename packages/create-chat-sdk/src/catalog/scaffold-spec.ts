@@ -64,6 +64,8 @@ export interface ConnectEnvVar {
 export interface AdapterConnectSpec {
   /** Environment variable holding the Vercel Connect connector UID. */
   connectorEnvVar: string;
+  /** Connector service prefix when it differs from the adapter slug. */
+  connectorService?: string;
   /** Extra Connect-only `.env.example` entries (e.g. recommended bot ids). */
   extraEnv?: readonly ConnectEnvVar[];
   /** Helper exported from `@vercel/connect/chat`, e.g. `connectSlackAdapter`. */
@@ -73,6 +75,8 @@ export interface AdapterConnectSpec {
    * forwarding; use `native` when Connect supplies outbound credentials only.
    */
   inbound?: "connect-triggers" | "native";
+  /** Adapter options emitted after the Connect helper spread. */
+  properties?: readonly ScaffoldProperty[];
 }
 
 /**
@@ -81,7 +85,7 @@ export interface AdapterConnectSpec {
 export interface CliScaffoldSpec {
   /**
    * Vercel Connect code-generation policy. Present only for adapters that
-   * support Connect (Slack, Discord, GitHub, Linear, Notion, Telegram).
+   * support Connect (Slack, Discord, GitHub, Linear, Notion, Teams, Telegram).
    */
   connect?: AdapterConnectSpec;
   /**
@@ -212,6 +216,7 @@ export const CLI_SCAFFOLD_SPEC = {
     connect: {
       connectorEnvVar: "LINEAR_CONNECTOR",
       helper: "connectLinearAdapter",
+      properties: [{ key: "mode", value: literal('"agent-sessions"') }],
     },
     invocation: { kind: "zero-arg" },
   },
@@ -316,6 +321,11 @@ export const CLI_SCAFFOLD_SPEC = {
     invocation: { kind: "zero-arg" },
   },
   teams: {
+    connect: {
+      connectorEnvVar: "TEAMS_CONNECTOR",
+      connectorService: "microsoft-teams",
+      helper: "connectTeamsAdapter",
+    },
     invocation: {
       kind: "object",
       properties: [{ key: "appType", value: literal('"SingleTenant"') }],

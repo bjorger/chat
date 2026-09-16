@@ -10,7 +10,7 @@ related:
   - /docs/ai
 ---
 
-Chat SDK accepts any `AsyncIterable<string>` as a message, enabling real-time streaming of AI responses and other incremental content to chat platforms. For platforms with native or structured streaming support, you can also stream `StreamChunk` objects for rich content like task progress cards and plan updates.
+Chat SDK accepts any `AsyncIterable<string>` as a message, enabling real-time streaming of AI responses and other incremental content to chat platforms. Streams from the AI SDK and TanStack AI are detected automatically. For platforms with native or structured streaming support, you can also stream `StreamChunk` objects for rich content like task progress cards and plan updates.
 
 ## AI SDK integration
 
@@ -62,6 +62,37 @@ await thread.post(
   })
 );
 ```
+
+## TanStack AI integration
+
+The stream returned by `chat()` from `@tanstack/ai` can be passed straight to `thread.post()`:
+
+```typescript title="lib/bot.ts" lineNumbers
+import { chat } from "@tanstack/ai";
+import { vercelGatewayText } from "@tanstack/ai-vercel-gateway";
+
+bot.onNewMention(async (thread, message) => {
+  const abortController = new AbortController();
+  thread.signal.addEventListener("abort", () => abortController.abort(), {
+    once: true,
+  });
+
+  const stream = chat({
+    adapter: vercelGatewayText("anthropic/claude-opus-5"),
+    messages: [{ role: "user", content: message.text }],
+    abortController,
+  });
+  await thread.post(stream);
+});
+```
+
+TanStack AI streams follow the AG-UI protocol. Chat SDK extracts the text from `TEXT_MESSAGE_CONTENT` deltas and treats each `TEXT_MESSAGE_END` as a paragraph break, so when the tool loop runs several model turns their text is separated by `\n\n` (the same behavior as `finish-step` for the AI SDK). Tool call, reasoning, run, and step events are skipped.
+
+This is for text responses. A structured-output run (`chat({ ..., outputSchema, stream: true })`) streams its JSON as `TEXT_MESSAGE_CONTENT` deltas, so posting that stream would show raw JSON in the channel. Format the result yourself and post the string instead.
+
+TanStack's `chat()` takes an `AbortController` rather than a signal. Forwarding `thread.signal` to it, as above, lets platform cancellation stop model generation.
+
+To feed prior thread history into `chat()` and give it Chat SDK tools, use `toTanStackMessages` and `createTanStackTools` from `chat/ai/tanstack`, covered in [TanStack AI](/docs/ai/tanstack-ai).
 
 ## Custom streams
 

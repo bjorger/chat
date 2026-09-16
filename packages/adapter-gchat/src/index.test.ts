@@ -20,6 +20,9 @@ import type {
   WorkspaceEventNotification,
 } from "./workspace-events";
 
+const FOREIGN_SPACE_REGEX = /does not belong to space/;
+const INVALID_MESSAGE_ID_REGEX = /Invalid Google Chat message id/;
+
 const DM_SUFFIX_PATTERN = /:dm$/;
 const VERIFICATION_REQUIRED_PATTERN =
   /Webhook signature verification is required/;
@@ -1655,7 +1658,7 @@ describe("GoogleChatAdapter", () => {
       };
 
       await expect(
-        adapter.editMessage(threadId, "msg1", "edit")
+        adapter.editMessage(threadId, "spaces/ABC123/messages/msg1", "edit")
       ).rejects.toBeTruthy();
     });
   });
@@ -1690,8 +1693,160 @@ describe("GoogleChatAdapter", () => {
       };
 
       await expect(
-        adapter.deleteMessage("gchat:spaces/ABC123", "msg1")
+        adapter.deleteMessage(
+          "gchat:spaces/ABC123",
+          "spaces/ABC123/messages/msg1"
+        )
       ).rejects.toBeTruthy();
+    });
+  });
+
+  describe("message space check", () => {
+    const THREAD = "gchat:spaces/ABC123";
+    const FOREIGN_MESSAGE = "spaces/OTHER/messages/msg9";
+
+    function installSpyApi(adapter: GoogleChatAdapter) {
+      const api = {
+        spaces: {
+          messages: {
+            update: vi.fn().mockResolvedValue({ data: {} }),
+            delete: vi.fn().mockResolvedValue({}),
+            reactions: {
+              create: vi.fn().mockResolvedValue({}),
+              list: vi.fn().mockResolvedValue({ data: { reactions: [] } }),
+              delete: vi.fn().mockResolvedValue({}),
+            },
+          },
+        },
+      };
+      (adapter as any).chatApi = api;
+      return api;
+    }
+
+    it("editMessage rejects a message from another space", async () => {
+      const { adapter } = await createInitializedAdapter();
+      const api = installSpyApi(adapter);
+      await expect(
+        adapter.editMessage(THREAD, FOREIGN_MESSAGE, "edit")
+      ).rejects.toThrow(FOREIGN_SPACE_REGEX);
+      expect(api.spaces.messages.update).not.toHaveBeenCalled();
+    });
+
+    it("deleteMessage rejects a message from another space", async () => {
+      const { adapter } = await createInitializedAdapter();
+      const api = installSpyApi(adapter);
+      await expect(
+        adapter.deleteMessage(THREAD, FOREIGN_MESSAGE)
+      ).rejects.toThrow(FOREIGN_SPACE_REGEX);
+      expect(api.spaces.messages.delete).not.toHaveBeenCalled();
+    });
+
+    it("addReaction rejects a message from another space", async () => {
+      const { adapter } = await createInitializedAdapter();
+      const api = installSpyApi(adapter);
+      await expect(
+        adapter.addReaction(THREAD, FOREIGN_MESSAGE, "\u{1f44d}")
+      ).rejects.toThrow(FOREIGN_SPACE_REGEX);
+      expect(api.spaces.messages.reactions.create).not.toHaveBeenCalled();
+    });
+
+    it("removeReaction rejects a message from another space", async () => {
+      const { adapter } = await createInitializedAdapter();
+      const api = installSpyApi(adapter);
+      await expect(
+        adapter.removeReaction(THREAD, FOREIGN_MESSAGE, "\u{1f44d}")
+      ).rejects.toThrow(FOREIGN_SPACE_REGEX);
+      expect(api.spaces.messages.reactions.list).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["path traversal", "spaces/ABC123/messages/../../OTHER/messages/msg9"],
+      ["dot segment", "spaces/ABC123/messages/./msg1"],
+      ["extra segment", "spaces/ABC123/messages/msg1/reactions/r1"],
+      ["query string", "spaces/ABC123/messages/msg1?alt=json"],
+      ["fragment", "spaces/ABC123/messages/msg1#x"],
+      ["percent encoding", "spaces/ABC123/messages/%2e%2e/OTHER"],
+      ["whitespace", "spaces/ABC123/messages/msg1 "],
+      ["bare id", "msg1"],
+      ["empty", ""],
+    ])("rejects a malformed message id (%s)", async (_label, id) => {
+      const { adapter } = await createInitializedAdapter();
+      const api = installSpyApi(adapter);
+      await expect(adapter.deleteMessage(THREAD, id)).rejects.toThrow(
+        INVALID_MESSAGE_ID_REGEX
+      );
+      expect(api.spaces.messages.delete).not.toHaveBeenCalled();
+    });
+
+    it("accepts a message in the thread's space", async () => {
+      const { adapter } = await createInitializedAdapter();
+      const api = installSpyApi(adapter);
+      await adapter.deleteMessage(THREAD, "spaces/ABC123/messages/msg1");
+      expect(api.spaces.messages.delete).toHaveBeenCalledWith({
+        name: "spaces/ABC123/messages/msg1",
+      });
+    });
+  });
+
+  describe("fetchMessage", () => {
+    it("returns the message with the thread Google reports for it", async () => {
+      const { adapter } = await createInitializedAdapter();
+      const mockGet = vi.fn().mockResolvedValue({
+        data: {
+          name: "spaces/ABC123/messages/msg1",
+          text: "hello",
+          thread: { name: "spaces/ABC123/threads/other" },
+          sender: { name: "users/1", displayName: "Alice", type: "HUMAN" },
+          createTime: "2024-01-01T00:00:00Z",
+        },
+      });
+      (adapter as any).chatApi = { spaces: { messages: { get: mockGet } } };
+
+      const message = await adapter.fetchMessage(
+        "gchat:spaces/ABC123",
+        "spaces/ABC123/messages/msg1"
+      );
+
+      expect(mockGet).toHaveBeenCalledWith({
+        name: "spaces/ABC123/messages/msg1",
+      });
+      expect(message?.id).toBe("spaces/ABC123/messages/msg1");
+      expect(message?.text).toBe("hello");
+      expect(message?.threadId).toBe(
+        adapter.encodeThreadId({
+          spaceName: "spaces/ABC123",
+          threadName: "spaces/ABC123/threads/other",
+        })
+      );
+    });
+
+    it("returns null when the message does not exist", async () => {
+      const { adapter } = await createInitializedAdapter();
+      const mockGet = vi
+        .fn()
+        .mockRejectedValue({ code: 404, message: "Not found" });
+      (adapter as any).chatApi = { spaces: { messages: { get: mockGet } } };
+
+      await expect(
+        adapter.fetchMessage(
+          "gchat:spaces/ABC123",
+          "spaces/ABC123/messages/gone"
+        )
+      ).resolves.toBeNull();
+    });
+
+    it("rejects a message from another space without calling the API", async () => {
+      const { adapter } = await createInitializedAdapter();
+      const mockGet = vi.fn();
+      (adapter as any).chatApi = { spaces: { messages: { get: mockGet } } };
+
+      await expect(
+        adapter.fetchMessage(
+          "gchat:spaces/ABC123",
+          "spaces/OTHER/messages/msg9"
+        )
+      ).rejects.toThrow(FOREIGN_SPACE_REGEX);
+      expect(mockGet).not.toHaveBeenCalled();
     });
   });
 
@@ -1737,7 +1892,11 @@ describe("GoogleChatAdapter", () => {
       };
 
       await expect(
-        adapter.addReaction("gchat:spaces/ABC123", "msg1", "\u{1f44d}")
+        adapter.addReaction(
+          "gchat:spaces/ABC123",
+          "spaces/ABC123/messages/msg1",
+          "\u{1f44d}"
+        )
       ).rejects.toThrow(AdapterRateLimitError);
     });
   });

@@ -136,6 +136,53 @@ describe("Vercel Connect generation", () => {
     expect(readme).toContain("Discord Gateway (cron)");
   });
 
+  it("scaffolds Teams with managed Connect identity and webhook verification", () => {
+    const config = connectConfig(["teams"]);
+    const botTs = generateBotTs(config);
+    expect(botTs).toContain(
+      'import { connectTeamsAdapter } from "@vercel/connect/chat";'
+    );
+    expect(botTs).toContain("teams: createTeamsAdapter({");
+    expect(botTs).toContain(
+      '...connectTeamsAdapter(requireEnv("TEAMS_CONNECTOR")),'
+    );
+    expect(botTs).not.toContain("appType:");
+
+    const envExample = generateEnvExample(config);
+    expect(envExample).toContain("TEAMS_CONNECTOR=");
+    expect(envExample).toContain("microsoft-teams/your-connector");
+    expect(envExample).not.toContain("TEAMS_APP_ID=");
+    expect(envExample).not.toContain("TEAMS_APP_PASSWORD=");
+    expect(envExample).not.toContain("TEAMS_APP_TENANT_ID=");
+    expect(
+      generatePackageJson({ dependencies: {} }, config).dependencies?.[
+        "@vercel/connect"
+      ]
+    ).toBe("latest");
+
+    const readme = generateReadme(config);
+    expect(readme).toContain(
+      "Enable Connect trigger forwarding for Microsoft Teams"
+    );
+    expect(readme).toContain("/api/webhooks/teams");
+  });
+
+  it("preserves native Teams setup without Connect", () => {
+    const config = makeConfig(["teams"]);
+    expect(generateBotTs(config)).toContain('appType: "SingleTenant"');
+    expect(generateBotTs(config)).not.toContain("connectTeamsAdapter");
+    const envExample = generateEnvExample(config);
+    expect(envExample).toContain("TEAMS_APP_ID=");
+    expect(envExample).toContain("TEAMS_APP_PASSWORD=");
+    expect(envExample).toContain("TEAMS_APP_TENANT_ID=");
+    expect(envExample).not.toContain("TEAMS_CONNECTOR=");
+    expect(
+      generatePackageJson({ dependencies: {} }, config).dependencies?.[
+        "@vercel/connect"
+      ]
+    ).toBeUndefined();
+  });
+
   it("scaffolds Notion with Connect tokens and native webhook verification", () => {
     const botTs = generateBotTs(connectConfig(["notion"]));
     expect(botTs).toContain(
@@ -207,6 +254,31 @@ describe("Vercel Connect generation", () => {
     );
   });
 
+  it("explicitly enables agent sessions only for Linear Connect bots", () => {
+    const result = generateBotTs(connectConfig(["linear"]));
+    expect(result).toContain(
+      '...connectLinearAdapter(requireEnv("LINEAR_CONNECTOR")),\n      mode: "agent-sessions",'
+    );
+    expect(generateBotTs(makeConfig(["linear"]))).toContain(
+      "linear: createLinearAdapter(),"
+    );
+    expect(generateBotTs(makeConfig(["linear"]))).not.toContain(
+      'mode: "agent-sessions"'
+    );
+    expect(generateBotTs(connectConfig(["slack"]))).not.toContain(
+      'mode: "agent-sessions"'
+    );
+    const readme = generateReadme(connectConfig(["linear"]));
+    expect(readme).toContain('mode: "agent-sessions"');
+    expect(readme).toContain("Enable **Agent session events**");
+    expect(generateReadme(makeConfig(["linear"]))).not.toContain(
+      "Enable **Agent session events**"
+    );
+    expect(generateReadme(connectConfig(["slack"]))).not.toContain(
+      "Enable **Agent session events**"
+    );
+  });
+
   it("imports every selected Connect helper, sorted", () => {
     const result = generateBotTs(
       connectConfig([
@@ -215,11 +287,12 @@ describe("Vercel Connect generation", () => {
         "github",
         "linear",
         "notion",
+        "teams",
         "telegram",
       ])
     );
     expect(result).toContain(
-      'import { connectDiscordAdapter, connectGitHubAdapter, connectLinearAdapter, connectNotionAdapter, connectSlackAdapter, connectTelegramAdapter } from "@vercel/connect/chat";'
+      'import { connectDiscordAdapter, connectGitHubAdapter, connectLinearAdapter, connectNotionAdapter, connectSlackAdapter, connectTeamsAdapter, connectTelegramAdapter } from "@vercel/connect/chat";'
     );
   });
 
@@ -270,6 +343,39 @@ describe("Vercel Connect generation", () => {
     expect(result).toContain("Authentication (Vercel Connect)");
     expect(result).toContain("vercel env pull");
     expect(result).toContain("SLACK_CONNECTOR");
+  });
+
+  it("directs Connect-forwarded webhook testing to a deployment", () => {
+    const result = generateReadme(connectConfig(["teams"]));
+    expect(result).toContain(
+      "Deploy the app and configure Connect trigger destinations for Microsoft Teams"
+    );
+    expect(result).not.toContain("Expose your local server");
+  });
+
+  it("keeps local setup for native webhooks with or without Connect", () => {
+    for (const config of [
+      makeConfig(["slack"]),
+      connectConfig(["notion"]),
+      connectConfig(["gchat"]),
+    ]) {
+      const result = generateReadme(config);
+      expect(result).toContain("Expose your local server");
+      expect(result).not.toContain(
+        "Deploy the app and configure Connect trigger destinations"
+      );
+    }
+  });
+
+  it("distinguishes deployed Connect triggers from native webhooks in mixed projects", () => {
+    const result = generateReadme(connectConfig(["slack", "notion", "gchat"]));
+    expect(result).toContain("Connect trigger destinations for Slack");
+    expect(result).toContain(
+      "For Notion, Google Chat, configure native webhook URLs"
+    );
+    expect(result).toContain(
+      "use a tunnel when testing those webhooks locally"
+    );
   });
 
   it("omits the README Connect section without a Connect-capable adapter", () => {

@@ -107,6 +107,10 @@ export const findPublishedPackages = (): PublishedPackage[] => {
 
 export const VALID_PACKAGE_README_IMPORTS = [
   "chat",
+  "@chat-adapter/gmail",
+  "@chat-adapter/gmail/api",
+  "@chat-adapter/gmail/format",
+  "@chat-adapter/gmail/webhook",
   "@chat-adapter/slack",
   "@chat-adapter/teams",
   "@chat-adapter/gchat",
@@ -149,6 +153,7 @@ export const VALID_PACKAGE_README_IMPORTS = [
 export const VALID_DOC_PACKAGES = [
   "chat",
   "chat/ai",
+  "chat/ai/tanstack",
   "chat/adapters",
   "chat/serialization",
   "chat/workflow",
@@ -200,6 +205,9 @@ export const VALID_DOC_PACKAGES = [
   "@ai-sdk/anthropic",
   "@ai-sdk/openai",
   "@ai-sdk/gateway",
+  // TanStack AI, used by the TanStack examples in the streaming and chat/ai docs.
+  "@tanstack/ai",
+  "@tanstack/ai-vercel-gateway",
   "@vercel/sandbox",
   "@vercel/functions",
   "@vercel/connect",

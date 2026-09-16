@@ -156,6 +156,46 @@ describe("CLI Vercel Connect mode", () => {
     expect(envExample).not.toContain("DISCORD_APPLICATION_ID=");
   });
 
+  it("scaffolds Teams with Vercel Connect when --connect is passed", async () => {
+    process.exitCode = undefined;
+    await createProgram().parseAsync([
+      "node",
+      "create-chat-sdk",
+      "connect-teams-bot",
+      "--adapter",
+      "teams",
+      "memory",
+      "--connect",
+      "-yq",
+      "--skip-install",
+      "--no-git",
+    ]);
+    expect(process.exitCode).toBeUndefined();
+    const botTs = readProjectFile("connect-teams-bot", "src/lib/bot.ts");
+    expect(botTs).toContain(
+      'import { connectTeamsAdapter } from "@vercel/connect/chat";'
+    );
+    expect(botTs).toContain(
+      '...connectTeamsAdapter(requireEnv("TEAMS_CONNECTOR")),'
+    );
+    const packageJson = JSON.parse(
+      readProjectFile("connect-teams-bot", "package.json")
+    ) as { dependencies?: Record<string, string> };
+    expect(packageJson.dependencies?.["@vercel/connect"]).toBe("latest");
+    expect(packageJson.dependencies?.["@chat-adapter/teams"]).toBe("latest");
+    const envExample = readProjectFile("connect-teams-bot", ".env.example");
+    expect(envExample).toContain("TEAMS_CONNECTOR=");
+    expect(envExample).toContain("microsoft-teams/your-connector");
+    expect(envExample).not.toContain("TEAMS_APP_ID=");
+    expect(envExample).not.toContain("TEAMS_APP_PASSWORD=");
+    expect(envExample).not.toContain("TEAMS_APP_TENANT_ID=");
+    const readme = readProjectFile("connect-teams-bot", "README.md");
+    expect(readme).toContain(
+      "Enable Connect trigger forwarding for Microsoft Teams"
+    );
+    expect(readme).toContain("/api/webhooks/teams");
+  });
+
   it("scaffolds Notion with Connect tokens and native webhooks", async () => {
     process.exitCode = undefined;
     const program = createProgram();

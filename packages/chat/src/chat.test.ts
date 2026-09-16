@@ -29,6 +29,7 @@ import type {
   ModalSubmitEvent,
   ReactionEvent,
   StateAdapter,
+  WebhookOptions,
 } from "./types";
 
 describe("Chat", () => {
@@ -372,6 +373,130 @@ describe("Chat", () => {
     resolveHandler();
     await tracker;
     expect(resolved).toBe(true);
+  });
+
+  it("should optionally propagate handler errors through waitUntil", async () => {
+    const handlerError = new Error("handler failed");
+    const fail = vi.fn().mockRejectedValue(handlerError);
+    const user = {
+      userId: "U123",
+      userName: "user",
+      fullName: "Test User",
+      isBot: false,
+      isMe: false,
+    };
+    const errorSpy = mockLogger.error as ReturnType<typeof vi.fn>;
+
+    chat.onNewMention(fail);
+    chat.onAction("fail", fail);
+    chat.onSlashCommand("/fail", fail);
+
+    const dispatches: Array<{
+      kind: string;
+      direct: "fulfilled" | "rejected" | "void";
+      logMessage: string;
+      metadata: (suffix: string) => Record<string, unknown>;
+      dispatch: (
+        options: WebhookOptions,
+        suffix: string
+      ) => Promise<void> | void;
+    }> = [
+      {
+        kind: "message",
+        direct: "rejected",
+        logMessage: "Message processing error",
+        metadata: (suffix) => ({
+          error: handlerError,
+          threadId: `slack:C123:${suffix}`,
+        }),
+        dispatch: (options, suffix) =>
+          chat.processMessage(
+            mockAdapter,
+            `slack:C123:${suffix}`,
+            createTestMessage(`msg-${suffix}`, "Hey @slack-bot fail"),
+            options
+          ),
+      },
+      {
+        kind: "action",
+        direct: "rejected",
+        logMessage: "Action processing error",
+        metadata: (suffix) => ({
+          error: handlerError,
+          actionId: "fail",
+          messageId: suffix,
+        }),
+        dispatch: (options, suffix) =>
+          chat.processAction(
+            {
+              actionId: "fail",
+              user,
+              messageId: suffix,
+              threadId: `slack:C123:${suffix}`,
+              adapter: mockAdapter,
+              raw: {},
+            },
+            options
+          ),
+      },
+      {
+        kind: "command",
+        direct: "rejected",
+        logMessage: "Slash command processing error",
+        metadata: (suffix) => ({
+          error: handlerError,
+          command: "/fail",
+          text: suffix,
+        }),
+        dispatch: (options, suffix) =>
+          chat.processSlashCommand(
+            {
+              command: "/fail",
+              text: suffix,
+              user,
+              adapter: mockAdapter,
+              raw: {},
+              channelId: "slack:C123",
+            },
+            options
+          ),
+      },
+    ];
+
+    for (const dispatch of dispatches) {
+      for (const propagateHandlerErrors of [false, true]) {
+        errorSpy.mockClear();
+        const tasks: Promise<unknown>[] = [];
+        const suffix = `${dispatch.kind}-${propagateHandlerErrors}`;
+        const returned = dispatch.dispatch(
+          {
+            waitUntil: (task) => tasks.push(task),
+            ...(propagateHandlerErrors && { propagateHandlerErrors: true }),
+          },
+          suffix
+        );
+        const [direct] = await Promise.allSettled([returned]);
+        const [background] = await Promise.allSettled(tasks);
+
+        expect(tasks).toHaveLength(1);
+        expect(returned === undefined ? "void" : direct.status).toBe(
+          dispatch.direct
+        );
+        if (direct.status === "rejected") {
+          expect(direct.reason).toBe(handlerError);
+        }
+        expect(background.status).toBe(
+          propagateHandlerErrors ? "rejected" : "fulfilled"
+        );
+        if (background.status === "rejected") {
+          expect(background.reason).toBe(handlerError);
+        }
+        expect(errorSpy).toHaveBeenCalledWith(
+          dispatch.logMessage,
+          dispatch.metadata(suffix)
+        );
+      }
+    }
   });
 
   it("aborts an active thread signal from another Chat instance", async () => {

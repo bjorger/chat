@@ -1063,16 +1063,15 @@ export class Chat<
       }
     })();
 
-    // Track via waitUntil with errors swallowed (existing webhook semantics —
-    // platforms shouldn't retry on handler bugs). The returned task itself
-    // still rejects so streaming adapters (e.g. @chat-adapter/web) can
-    // surface failures to the client.
+    // Keep existing fulfilled waitUntil semantics by default while logging.
+    // The returned task itself still rejects so streaming adapters (e.g.
+    // @chat-adapter/web) can surface failures to the client.
     const tracked = task.catch((err) => {
       this.logger.error("Message processing error", { error: err, threadId });
     });
 
     if (options?.waitUntil) {
-      options.waitUntil(tracked);
+      options.waitUntil(options.propagateHandlerErrors ? task : tracked);
     }
 
     return task;
@@ -1195,7 +1194,7 @@ export class Chat<
     });
 
     if (options?.waitUntil) {
-      options.waitUntil(tracked);
+      options.waitUntil(options.propagateHandlerErrors ? task : tracked);
     }
 
     return task;
@@ -1366,7 +1365,7 @@ export class Chat<
     });
 
     if (options?.waitUntil) {
-      options.waitUntil(tracked);
+      options.waitUntil(options.propagateHandlerErrors ? task : tracked);
     }
     return task;
   }
