@@ -176,3 +176,7 @@ return results.some((result) => result.status === "rejected")
 ```
 
 This option only exposes handler failures through the supplied promise. It does not automatically change a webhook response, including when using Vercel's native `waitUntil`.
+
+Keep handlers short when awaiting them before responding. [Slack requires acknowledgement within three seconds](https://docs.slack.dev/apis/events-api/#responding-to-events), so move long-running work outside the webhook response path.
+
+Error propagation does not guarantee retries or durable delivery. SDK deduplication can skip redelivered events after a handler fails, so returning `500` alone does not ensure the handler runs again.
