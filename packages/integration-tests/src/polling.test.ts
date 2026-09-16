@@ -4,7 +4,7 @@ import {
   createTelegramAdapter,
   type TelegramUpdate,
 } from "@chat-adapter/telegram";
-import { Chat, ConsoleLogger } from "chat";
+import { Chat, ConsoleLogger, type Thread } from "chat";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 function deferred() {
@@ -73,12 +73,13 @@ function fixture(
         const payload = JSON.parse(String(options?.body)) as {
           offset?: number;
           limit: number;
+          timeout: number;
         };
         polls.push(payload);
         const pending = updates
           .filter((update) => update.update_id >= (payload.offset ?? 0))
           .slice(0, payload.limit);
-        if (pending.length === 0) {
+        if (pending.length === 0 && payload.timeout !== 0) {
           return new Promise<Response>((resolve, reject) => {
             const abort = () => {
               deliver = () => {};
@@ -129,9 +130,9 @@ function fixture(
       updates.push(update);
       deliver();
     },
-    async start(limit = 100) {
+    async start(limit = 100, retryDelayMs = 10) {
       await bot.initialize();
-      await adapter.startPolling({ limit, retryDelayMs: 10, timeout: 1 });
+      await adapter.startPolling({ limit, retryDelayMs, timeout: 1 });
     },
     async stop() {
       await adapter.stopPolling();
@@ -295,6 +296,219 @@ describe("Telegram polling admission", () => {
       await vi.waitFor(async () =>
         expect(await test.state.get(checkpoint)).toBeNull()
       );
+    } finally {
+      await test.stop();
+    }
+  });
+
+  it.each([
+    403, 429, 503,
+  ])("keeps polling other chats after an album reply fails with %s", async (status) => {
+    const test = fixture(album());
+    const fetcher = fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, options) => {
+        if (String(input).endsWith("/sendMessage")) {
+          const payload = JSON.parse(String(options?.body)) as {
+            chat_id: number;
+            text: string;
+          };
+          if (String(payload.chat_id) === "1") {
+            return Response.json(
+              {
+                ok: false,
+                error_code: status,
+                description: "Reply failed",
+                parameters: { retry_after: 60 },
+              },
+              { status }
+            );
+          }
+          return Response.json({
+            ok: true,
+            result: {
+              message_id: 100,
+              date: 1,
+              text: payload.text,
+              chat: { id: payload.chat_id, type: "private" },
+            },
+          });
+        }
+        return fetcher(input, options);
+      })
+    );
+    const handler = vi.fn(async (thread: Thread) => {
+      await thread.post("reply");
+    });
+    test.bot.onNewMention(handler);
+    try {
+      await test.start(1, 0);
+      await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce(), {
+        timeout: 5000,
+      });
+      test.deliver({
+        ...message(3),
+        message: { ...message(3).message, chat: { id: 2, type: "private" } },
+      });
+      await vi.waitFor(() => expect(test.polls.at(-1)?.offset).toBe(4), {
+        timeout: 3000,
+      });
+      expect(
+        handler.mock.calls.some(([thread]) => thread.id === "telegram:2")
+      ).toBe(true);
+      expect(await test.state.get(checkpoint)).toMatchObject({
+        offset: 4,
+        pending: [
+          {
+            update: { update_id: 1 },
+            attempts: 1,
+            retryAt: expect.any(Number),
+          },
+          {
+            update: { update_id: 2 },
+            attempts: 1,
+            retryAt: expect.any(Number),
+          },
+        ],
+      });
+      if (status === 429) {
+        const saved = await test.state.get<{ pending: { retryAt: number }[] }>(
+          checkpoint
+        );
+        expect(saved?.pending[0].retryAt).toBeGreaterThan(Date.now() + 50_000);
+      }
+    } finally {
+      await test.stop();
+    }
+  });
+
+  it("preserves album backoff on restart while processing new chats", async () => {
+    const state = createMemoryState();
+    await state.connect();
+    const retryAt = Date.now() + 60_000;
+    const pending = album().map((update) => ({
+      update,
+      receivedAt: 0,
+      attempts: 5,
+      retryAt,
+    }));
+    await state.set(
+      checkpoint,
+      JSON.parse(JSON.stringify({ offset: 3, pending }))
+    );
+    const test = fixture(
+      [
+        {
+          ...message(3),
+          message: { ...message(3).message, chat: { id: 2, type: "private" } },
+        },
+      ],
+      state
+    );
+    const handler = vi.fn();
+    test.bot.onNewMention(handler);
+    try {
+      await test.start();
+      await vi.waitFor(() => expect(test.polls.at(-1)?.offset).toBe(4));
+      expect(handler).toHaveBeenCalledOnce();
+      expect(handler.mock.calls[0][0].id).toBe("telegram:2");
+      expect(await state.get(checkpoint)).toEqual({ offset: 4, pending });
+    } finally {
+      await test.stop();
+    }
+  });
+
+  it("polls between album batches when another album becomes ready during a handler", async () => {
+    const state = createMemoryState();
+    await state.connect();
+    const pending = [
+      ...album().map((update) => ({ update, receivedAt: 0 })),
+      ...album().map((update) => ({
+        update: {
+          ...update,
+          update_id: update.update_id + 2,
+          message: { ...update.message, chat: { id: 2, type: "private" } },
+        },
+        receivedAt: Date.now(),
+      })),
+    ];
+    await state.set(checkpoint, { offset: 5, pending });
+    const test = fixture([], state);
+    const gate = deferred();
+    const order: string[] = [];
+    test.bot.onNewMention(async (thread) => {
+      order.push(thread.id);
+      if (thread.id === "telegram:1") {
+        await gate.promise;
+        throw new Error("Reply failed");
+      }
+    });
+    try {
+      await test.start();
+      await vi.waitFor(() => expect(order).toEqual(["telegram:1"]), {
+        timeout: 3000,
+      });
+      test.deliver({
+        ...message(5),
+        message: { ...message(5).message, chat: { id: 3, type: "private" } },
+      });
+      gate.resolve();
+      await vi.waitFor(() => expect(order).toContain("telegram:2"), {
+        timeout: 3000,
+      });
+      expect(order.slice(0, 3)).toEqual([
+        "telegram:1",
+        "telegram:3",
+        "telegram:2",
+      ]);
+    } finally {
+      gate.resolve();
+      await test.stop();
+    }
+  });
+
+  it.each([
+    [1, 2000],
+    [8, 30_000],
+  ])("retains the retry count %s and bounds album backoff", async (attempts, delay) => {
+    const state = createMemoryState();
+    await state.connect();
+    await state.set(checkpoint, {
+      offset: 3,
+      pending: album().map((update) => ({
+        update,
+        receivedAt: 0,
+        attempts,
+        retryAt: 0,
+      })),
+    });
+    const test = fixture([], state);
+    let failedAt = 0;
+    test.bot.onNewMention(() => {
+      failedAt = Date.now();
+      throw new Error("Reply failed");
+    });
+    try {
+      await test.start(100, 0);
+      await vi.waitFor(
+        async () => {
+          const saved = await state.get<{
+            pending: { attempts: number; retryAt: number }[];
+          }>(checkpoint);
+          expect(
+            saved?.pending.every((entry) => entry.attempts === attempts + 1)
+          ).toBe(true);
+          expect(saved?.pending[0].retryAt).toBeGreaterThanOrEqual(
+            failedAt + delay
+          );
+          expect(saved?.pending[0].retryAt).toBeLessThanOrEqual(
+            Date.now() + delay
+          );
+        },
+        { timeout: 3000 }
+      );
+      expect(test.polls.length).toBeGreaterThan(0);
     } finally {
       await test.stop();
     }

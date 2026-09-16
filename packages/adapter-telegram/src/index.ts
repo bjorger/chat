@@ -258,7 +258,9 @@ interface TelegramIncomingMediaGroupEntry {
 }
 
 interface TelegramPollingEntry {
+  attempts?: number;
   receivedAt: number;
+  retryAt?: number;
   update: TelegramUpdate;
 }
 
@@ -4014,6 +4016,7 @@ export class TelegramAdapter
     }
     let checkpoint: TelegramPollingCheckpoint | undefined;
     let consecutiveFailures = 0;
+    let drained = false;
     const MAX_BACKOFF_MS = 30_000;
     const completed = new Set<number>();
 
@@ -4042,19 +4045,73 @@ export class TelegramAdapter
           )
         );
         const deadline = (entries: TelegramPollingEntry[]) =>
-          Math.max(...entries.map((entry) => entry.receivedAt)) +
-          TELEGRAM_INCOMING_MEDIA_GROUP_SETTLE_MS;
+          Math.max(
+            ...entries.map((entry) =>
+              Math.max(
+                entry.receivedAt + TELEGRAM_INCOMING_MEDIA_GROUP_SETTLE_MS,
+                entry.retryAt ?? 0
+              )
+            )
+          );
         const ready = eligible.filter(
           (entries) => deadline(entries) <= Date.now()
         );
-        if (ready.length > 0) {
+        if (ready.length > 0 && !drained) {
           const results = await this.processPollingUpdates(
             ready.flatMap((entries) => entries.map((entry) => entry.update)),
             completed
           );
-          const pending = checkpoint.pending.filter(
-            (entry) => !completed.has(entry.update.update_id)
+          const failures = new Map(
+            results.flatMap((result) =>
+              "error" in result
+                ? [[result.update.update_id, result.error] as const]
+                : []
+            )
           );
+          const retries = new Map<
+            number,
+            { attempts: number; retryAt: number }
+          >();
+          for (const entries of ready) {
+            const failed = entries.find((entry) =>
+              failures.has(entry.update.update_id)
+            );
+            if (!failed) {
+              continue;
+            }
+            const attempts =
+              Math.max(...entries.map((entry) => entry.attempts ?? 0)) + 1;
+            const error = failures.get(failed.update.update_id);
+            const delay = Math.max(
+              Math.min(
+                Math.max(
+                  config.retryDelayMs,
+                  TELEGRAM_DEFAULT_POLLING_RETRY_DELAY_MS
+                ) *
+                  2 ** Math.min(attempts - 1, 30),
+                MAX_BACKOFF_MS
+              ),
+              error instanceof AdapterRateLimitError
+                ? (error.retryAfter ?? 0) * 1000
+                : 0
+            );
+            const retryAt = Date.now() + delay;
+            for (const entry of entries) {
+              retries.set(entry.update.update_id, { attempts, retryAt });
+            }
+            this.logger.warn("Telegram polling album processing failed", {
+              error: String(error),
+              updateId: failed.update.update_id,
+              attempts,
+              retryAt,
+            });
+          }
+          const pending = checkpoint.pending
+            .filter((entry) => !completed.has(entry.update.update_id))
+            .map((entry) => ({
+              ...entry,
+              ...retries.get(entry.update.update_id),
+            }));
           const next = { ...checkpoint, pending };
           if (pending.length > 0) {
             await state.set(key, next);
@@ -4063,12 +4120,10 @@ export class TelegramAdapter
           }
           checkpoint = next;
           for (const result of results) {
-            if ("error" in result) {
-              throw result.error;
-            }
             completed.delete(result.update.update_id);
           }
           consecutiveFailures = 0;
+          drained = true;
           continue;
         }
 
@@ -4077,7 +4132,7 @@ export class TelegramAdapter
             ? Math.max(0, Math.min(...eligible.map(deadline)) - Date.now())
             : undefined;
         let collecting = false;
-        if (remaining !== undefined) {
+        if (remaining !== undefined && remaining > 0) {
           timer = setTimeout(() => {
             collecting = true;
             this.pollingAbortController?.abort();
@@ -4091,7 +4146,7 @@ export class TelegramAdapter
               allowed_updates: config.allowedUpdates,
               limit: config.limit,
               offset: checkpoint.offset,
-              timeout: config.timeout,
+              timeout: remaining === 0 ? 0 : config.timeout,
             },
             { signal: this.pollingAbortController.signal }
           );
@@ -4104,6 +4159,7 @@ export class TelegramAdapter
         } finally {
           clearTimeout(timer);
         }
+        drained = false;
         if (!this.pollingActive) {
           return;
         }

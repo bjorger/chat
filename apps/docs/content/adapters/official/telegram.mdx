@@ -264,6 +264,8 @@ Polling waits for message, command, action and reaction processing before advanc
 
 Albums are buffered in bot-scoped state so parts arriving in separate polling responses can be combined. The adapter saves the parts and offset before acknowledging them, retains the buffer until processing succeeds, and resumes saved buffers when polling starts again. Album grouping uses a short settling window because Telegram does not provide an end-of-album event.
 
+Failed saved albums retain their parts and retry independently with exponential backoff, starting at a minimum of one second and capped at thirty seconds, or longer when Telegram specifies `retry_after`. Retry deadlines survive restarts with persistent state. Polling continues between album batches, so a rejected reply does not indefinitely block new updates for other chats. Repeated failures are logged; the adapter does not discard failed albums or guarantee exactly-once handler execution.
+
 Use a persistent state adapter, such as Redis or PostgreSQL, for recovery across process restarts. Memory state is suitable for local development but cannot preserve acknowledged album parts after process loss. Run only one polling instance per bot. Handlers must tolerate redelivery: a crash after an application side effect but before completion is saved can repeat that side effect.
 
 ### Auto mode
